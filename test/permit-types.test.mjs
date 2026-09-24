@@ -350,7 +350,35 @@ test('excavation: support over 1.2 m, safe batter angles, buried services', () =
   assert.deepEqual(PT.validate(clear, {}), []);
   assert.ok(has(PT.validate(complete('excavation', { gasTests: [], otherPermits: '' }, { confinedSpace: 'Yes' }), {}), /gas test/i));
   assert.ok(has(PT.validate(complete('excavation', { otherPermits: '' }, { confinedSpace: 'Yes' }), {}), /confined space entry permit/));
-  assert.deepEqual(PT.validate(complete('excavation', { gasTests: [], otherPermits: '' }, { confinedSpace: 'No' }), {}), []);
+  assert.deepEqual(PT.validate(complete('excavation', { gasTests: [], otherPermits: '' }, { confinedSpace: 'No', gasSource: 'No' }), {}), []);
+  assert.ok(has(PT.validate(complete('excavation', { gasTests: [] }, { confinedSpace: 'No', gasSource: 'Yes', depth: 1.5 }), {}), /gas test/i), 'deep dig near a gas source');
+  assert.deepEqual(PT.validate(complete('excavation', { gasTests: [] }, { confinedSpace: 'No', gasSource: 'Yes', depth: 1 }), {}), []);
+  // Rock can stand unsupported only with a written assessment.
+  const rock = 'None – stable rock, assessed by a competent person';
+  assert.deepEqual(PT.validate(complete('excavation', {}, { depth: 3, support: rock, groundType: 'Rock', tempWorks: 'GA-7, J. Geotech' }), {}), []);
+  assert.ok(has(PT.validate(complete('excavation', {}, { depth: 3, support: rock, groundType: 'Rock', tempWorks: '' }), {}), /stable rock/));
+  assert.ok(has(PT.validate(complete('excavation', {}, { depth: 3, support: rock, groundType: 'Sand', tempWorks: 'X' }), {}), /stable rock/));
+  // Fill and unknown ground use the flattest Table 1 slope.
+  assert.ok(has(PT.validate(complete('excavation', {}, { support: 'Battered or sloped', groundType: 'Unknown', groundCondition: 'Dry', tempWorks: '', batterAngle: 20 }), {}), /5° safe slope/));
+  assert.ok(has(PT.validate(complete('excavation', {}, { setBack: 0.3 }), {}), /0\.6 m back/));
+  const hot = complete('excavation', {}, { temperature: 41 }); hot.checks.heatStress = false;
+  assert.ok(has(PT.validate(hot, {}), /Heat stress/));
+  const lines = complete('excavation', {}, { overheadLines: 'Yes' }); lines.checks.overheadControls = false;
+  assert.ok(has(PT.validate(lines, {}), /Goalposts/));
+});
+
+test('work at height: guardrails first, fall clearance, ladders, wind for MEWPs', () => {
+  const arrest = 'Fall arrest (harness and energy-absorbing lanyard or SRL)';
+  assert.ok(has(PT.validate(complete('work_at_height', {}, { height: 4, fallProtection: arrest, whyNotCollective: '' }), {}), /not reasonably practicable/));
+  assert.deepEqual(PT.validate(complete('work_at_height', {}, { height: 1.5, fallProtection: arrest, whyNotCollective: '' }), {}), []);
+  assert.ok(has(PT.validate(complete('work_at_height', {}, { fallProtection: arrest, clearanceAvailable: 3, clearanceNeeded: 5.5 }), {}), /Only 3 m is clear below/));
+  assert.ok(has(PT.validate(complete('work_at_height', {}, { fallProtection: arrest, clearanceAvailable: '' }), {}), /clear distance below/));
+  assert.ok(has(PT.validate(complete('work_at_height', {}, { access: 'Ladder or stepladder', height: 3, fallProtection: 'Guardrails / edge protection', anchors: '', rescuers: [] }), {}), /CoP 37\.0/));
+  assert.ok(has(PT.validate(complete('work_at_height', {}, { access: 'MEWP – scissor lift', windLimit: '', windReading: '' }), {}), /wind limit and the wind speed/));
+  const boom = complete('work_at_height', {}, { access: 'MEWP – boom lift' }); boom.checks.boomHarness = false;
+  assert.ok(has(PT.validate(boom, {}), /Boom lift/));
+  const open = complete('work_at_height', {}, { openEdges: 'Yes' }); open.checks.openingsProtected = false;
+  assert.ok(has(PT.validate(open, {}), /openings covered/));
 });
 
 test('energy isolation: electrical and process isolations add their own checks', () => {
@@ -379,7 +407,7 @@ test('energy isolation: no live work, electrical details when electrical, gas te
 });
 
 test('general work: pressure tests, safety-critical equipment and optional toxic gas readings', () => {
-  assert.ok(has(PT.validate(complete('general', {}, { category: 'Pressure or leak testing', pressureTest: '' }), {}), /pressure test details/));
+  assert.ok(has(PT.validate(complete('general', {}, { category: 'Pressure or leak testing', pressureTest: '' }), {}), /pressure test medium and details/));
   const t = PT.byKey('general');
   const c = closeoutFor(t); c.checks.safetyEquipmentBack = false;
   assert.ok(has(PT.validateCloseout(complete('general', {}, { safetyEquipmentOut: 'Fire alarm zone 4 isolated' }), c), /back in service/));
@@ -388,5 +416,18 @@ test('general work: pressure tests, safety-critical equipment and optional toxic
   assert.deepEqual(PT.validate(complete('general', { gasTests: [noToxic] }), {}), [], 'H₂S and CO only where tested');
   const highCo = goodGas(t); highCo.co = 40;
   assert.ok(has(PT.validate(complete('general', { gasTests: [highCo] }), {}), /CO 40 ppm/));
-  assert.deepEqual(PT.validate(complete('general', { gasTests: [] }, { gasTestNeeded: 'No' }), {}), []);
+  const quiet = { gasTestNeeded: 'No', hazardousArea: 'No', category: 'Inspection or testing' };
+  assert.deepEqual(PT.validate(complete('general', { gasTests: [] }, quiet), {}), []);
+  assert.ok(has(PT.validate(complete('general', { gasTests: [] }, { ...quiet, category: 'Opening lines or equipment' }), {}), /gas test/i), 'opening lines needs a gas test');
+  assert.ok(has(PT.validate(complete('general', { gasTests: [] }, { ...quiet, hazardousArea: 'Yes' }), {}), /gas test/i), 'hazardous area needs a gas test');
+  assert.ok(has(PT.validate(complete('general', { otherPermits: '' }, { category: 'Scaffold erection or dismantling' }), {}), /work at height permit/));
+  assert.ok(has(PT.validate(complete('general', {}, { isolationNeeded: 'Yes', isolationCert: '' }), {}), /isolation certificate/));
+  const pneu = complete('general', {}, { category: 'Pressure or leak testing', pressureMedium: 'Pneumatic (air or gas)' }); pneu.checks.pneumaticApproved = false;
+  assert.ok(has(PT.validate(pneu, {}), /Pneumatic test approved/));
+});
+
+test('energy isolation: a stop button or interlock is not isolation', () => {
+  const row = { point: 'Pump P-4', energy: 'Electrical', method: 'E-stop pressed and tagged', lockNo: 'L-3', isolatedBy: 'E. Tech', verified: true };
+  assert.ok(has(PT.validate(complete('energy_isolation', { isolations: [row] }), {}), /not isolating devices/));
+  assert.deepEqual(PT.validate(complete('energy_isolation', { isolations: [{ ...row, method: 'Breaker racked out and locked' }] }), {}), []);
 });

@@ -86,9 +86,11 @@
   // Heat stress controls and a time limit become required at this temperature
   // inside a confined space (a practice trigger; see ADOSH-SF CoP 11.0).
   const HEAT_TRIGGER_C = 30;
+  // ADOSH-SF CoP 11.0 s3.1.1(e): a heat stress programme at 35 °C or more.
+  const HEAT_OUTDOOR_C = 35;
 
   const SUPPORT_METHODS = [
-    'None needed (1.2 m or less and assessed stable)', 'Battered or sloped', 'Benched',
+    'None needed (1.2 m or less and assessed stable)', 'None – stable rock, assessed by a competent person', 'Battered or sloped', 'Benched',
     'Timber or trench sheets with props', 'Trench box', 'Sheet piling or cofferdam', 'Engineered temporary works',
   ];
   // Safe batter angles in degrees from horizontal, dry and wet (ADOSH-SF CoP
@@ -103,6 +105,14 @@
     'Firm clay': { dry: 30, wet: 20 },
     'Stiff clay': { dry: 40, wet: 25 },
   };
+
+  // Work at height: a harness is in use (restraint or arrest), or the fall
+  // protection is a combination that may include one.
+  const needsHarness = (h) => /restraint|arrest|Several/i.test(h.detail('fallProtection'));
+  const isFallArrest = (h) => /arrest|Several/i.test(h.detail('fallProtection'));
+
+  // Methods that only act on a control circuit, which is not isolation.
+  const CONTROL_DEVICE = /\b(stop button|push ?button|e-?stop|emergency stop|selector|interlock|plc|vfd|drive stop|control switch)\b/i;
 
   // True when any isolation point on the permit is electrical.
   function isElectrical(p) {
@@ -294,7 +304,7 @@
       ],
       gasTest: {
         required: true, beforeWhat: 'anyone enters',
-        hint: 'Test from outside the space in this order: oxygen, flammable gas, then toxic gases. Test at the top, middle and bottom, before entry and after any break.',
+        hint: 'Test from outside the space in this order: oxygen, flammable gas, then toxic gases. Test at the top, middle and bottom, before entry and after any break. The H₂S and CO figures are 8-hour exposure limits (ADOSH-SF Occupational Standards, Schedule A): a longer shift may need lower site limits, and any toxic gas found at all calls for continuous monitoring.',
         failAdvice: 'Do not enter. Ventilate the space and test again.',
         limits: [OXYGEN, FLAMMABLE, H2S, CO],
       },
@@ -335,17 +345,25 @@
       personInChargeLabel: 'Permit holder (in charge of the work)',
       maxValidityHours: 12,
       fields: [
-        { key: 'height', label: 'Maximum possible fall', unit: 'm', kind: 'number', required: true, min: 0 },
+        { key: 'height', label: 'Maximum possible fall to the next level below', unit: 'm', kind: 'number', required: true, min: 0 },
         { key: 'access', label: 'Access or working platform', kind: 'select', required: true, options: HEIGHT_ACCESS },
         { key: 'fallProtection', label: 'Fall protection', kind: 'select', required: true, options: FALL_PROTECTION },
+        { key: 'whyNotCollective', label: 'Why guardrails or nets are not reasonably practicable', kind: 'text',
+          hint: 'Needed for falls of 2 m or more without guardrails or nets. Preventing a fall comes before arresting one (ADOSH-SF CoP 23.0 s3.2).' },
+        { key: 'openEdges', label: 'Open edges, or floor or roof openings, at the work area?', kind: 'select', required: true, options: YES_NO },
         { key: 'fragile', label: 'Work on or near a fragile roof or roof lights?', kind: 'select', required: true, options: YES_NO },
         { key: 'anchors', label: 'Anchor points or lifelines, with certificate reference', kind: 'text',
           hint: 'Needed for restraint or fall arrest. Rated for 2,450 kg per person attached.' },
+        { key: 'clearanceAvailable', label: 'Clear distance below the working level', unit: 'm', kind: 'number', min: 0, hint: 'Needed for fall arrest' },
+        { key: 'clearanceNeeded', label: 'Clearance the lanyard or SRL needs (manufacturer)', unit: 'm', kind: 'number', min: 0,
+          hint: 'Needed for fall arrest. A 2 m energy-absorbing lanyard often needs 5–6 m; use restraint or an SRL when it is lower.' },
         { key: 'platformTag', label: 'Scaffold or tower tag number and last inspection date', kind: 'text', hint: 'Needed for scaffolds and towers. Inspected within the last 7 days.' },
         { key: 'mewp', label: 'MEWP ID, certificate expiry and operator card', kind: 'text', hint: 'Needed when a MEWP is used' },
         { key: 'exclusionZone', label: 'Exclusion zone below the work', kind: 'text', required: true, hint: 'Size of the zone and how it is barricaded' },
-        { key: 'windLimit', label: 'Wind limit for this task', unit: 'm/s', kind: 'number', min: 0, hint: 'Site limit, or the MEWP rating if lower' },
-        { key: 'windReading', label: 'Wind speed at the start', unit: 'm/s', kind: 'number', min: 0 },
+        { key: 'windLimit', label: 'Wind limit for this task', unit: 'm/s', kind: 'number', min: 0,
+          hint: 'Site limit, or the MEWP, cradle or rope access limit if lower. Needed for MEWPs, cradles and rope access.' },
+        { key: 'windReading', label: 'Wind speed at the start, at or near working height', unit: 'm/s', kind: 'number', min: 0 },
+        { key: 'temperature', label: 'Forecast maximum temperature', unit: '°C', kind: 'number', required: true },
         { key: 'nearbyHazards', label: 'Nearby hazards (power lines, moving plant, traffic, work above or below)', kind: 'textarea' },
         { key: 'workers', label: 'People working at height, with training reference', kind: 'list', required: true, group: 'People' },
         { key: 'rescuePlan', label: 'Rescue plan and rescue equipment at the work area', kind: 'textarea', required: true, group: 'Rescue',
@@ -358,40 +376,63 @@
         { key: 'noAlternative', label: 'Work cannot reasonably be done without working at height', required: true },
         { key: 'edgeGuardrails', label: 'Guardrails (950 mm, mid-rail, 150 mm toe board) at open edges' },
         { key: 'openingsProtected', label: 'Floor and roof openings covered, secured and marked, or guarded' },
-        { key: 'platformInspected', label: 'Scaffold or tower inspected within 7 days and tagged safe' },
+        { key: 'platformInspected', label: 'Scaffold inspected in the last 7 days and since any change or storm; tag shown' },
+        { key: 'towerSafe', label: 'Tower no taller than 3 × its base, castors locked, nobody on it when moved' },
         { key: 'mewpChecked', label: 'MEWP certified, pre-use checked and run by a trained operator' },
-        { key: 'harnessChecked', label: 'Harness, lanyards and connectors checked and within inspection date' },
+        { key: 'mewpGround', label: 'Trained person at ground level who can use the ground controls' },
+        { key: 'boomHarness', label: 'Boom lift: harness with short restraint lanyard clipped to the basket anchor' },
+        { key: 'independentLine', label: 'Cradle or rope access: independent safety line per person on its own anchor' },
+        { key: 'harnessChecked', label: 'Harness, lanyards, connectors and SRLs pre-use checked and in test date' },
         { key: 'anchorsCertified', label: 'Anchor points certified for fall arrest (2,450 kg per person)' },
-        { key: 'fallClearance', label: 'Enough clearance below for the fall arrest system used' },
         { key: 'twinLanyard', label: 'Twin lanyard used so workers stay attached when moving' },
         { key: 'exclusionZoneSet', label: 'Exclusion zone below barricaded and signed; hard hats inside it', required: true },
-        { key: 'toolsTethered', label: 'Tools and materials tethered or in bags against dropping', required: true },
+        { key: 'toolsTethered', label: 'Tools and materials secured against falling (tethers, bags, toe boards, nets)', required: true },
         { key: 'rescueReady', label: 'Rescue plan in place and rescue equipment at the work area', required: true },
         { key: 'competent', label: 'Workers trained and competent for the task and equipment', required: true },
         { key: 'weatherChecked', label: 'Weather and wind checked and within the limits for the task', required: true },
         { key: 'overhead', label: 'Overhead power lines and nearby moving plant controlled' },
-        { key: 'ladderUse', label: 'Ladder only for short, light work; secured, 1 m above the landing' },
-        { key: 'fragileRoof', label: 'Fragile roofs and roof lights barricaded or boarded over' },
+        { key: 'ladderUse', label: 'Ladder inspected and tagged, at 70–80°, tied, 1 m above the landing' },
+        { key: 'stepladder', label: 'Stepladder working height 1.8 m or less' },
+        { key: 'fragileRoof', label: 'Fragile roof: guarded walkways, roof lights barricaded or boarded, signs up' },
         { key: 'lighting', label: 'Adequate lighting at the work area and access routes' },
-        { key: 'heatStress', label: 'Heat stress controls in place: water, rest, shade, midday break' },
+        { key: 'heatStress', label: 'Heat stress controls in place: water, rest, shade, summer midday break' },
       ],
       rules: [
         requireCheckWhen('edgeGuardrails', (p, h) => h.num(h.detail('height')) >= 2 && /Guardrails/.test(h.detail('fallProtection'))),
-        requireCheckWhen('platformInspected', (p, h) => /scaffold|tower/i.test(h.detail('access'))),
+        (p, h) => (h.num(h.detail('height')) >= 2 && !/Guardrails|nets/i.test(h.detail('fallProtection')) && h.isBlank(h.detail('whyNotCollective')))
+          ? 'For a fall of 2 m or more, use guardrails or nets, or record why they are not reasonably practicable (ADOSH-SF CoP 23.0).' : null,
+        requireCheckWhen('openingsProtected', (p, h) => h.detail('openEdges') === 'Yes'),
+        requireCheckWhen('platformInspected', (p, h) => /scaffold/i.test(h.detail('access'))),
+        requireCheckWhen('towerSafe', (p, h) => /tower/i.test(h.detail('access'))),
         requireCheckWhen('mewpChecked', (p, h) => /MEWP/.test(h.detail('access'))),
+        requireCheckWhen('mewpGround', (p, h) => /MEWP/.test(h.detail('access'))),
+        requireCheckWhen('boomHarness', (p, h) => /boom/i.test(h.detail('access'))),
+        requireCheckWhen('independentLine', (p, h) => /Suspended|Rope access/.test(h.detail('access'))),
         requireCheckWhen('ladderUse', (p, h) => /Ladder/.test(h.detail('access'))),
-        requireCheckWhen('harnessChecked', (p, h) => /restraint|arrest|Several/i.test(h.detail('fallProtection'))),
-        requireCheckWhen('anchorsCertified', (p, h) => /restraint|arrest|Several/i.test(h.detail('fallProtection'))),
-        requireCheckWhen('fallClearance', (p, h) => /arrest|Several/i.test(h.detail('fallProtection'))),
+        requireCheckWhen('harnessChecked', (p, h) => needsHarness(h)),
+        requireCheckWhen('anchorsCertified', (p, h) => needsHarness(h)),
         requireCheckWhen('fragileRoof', (p, h) => h.detail('fragile') === 'Yes'),
-        (p, h) => (/restraint|arrest|Several/i.test(h.detail('fallProtection')) && h.isBlank(h.detail('anchors')))
+        requireCheckWhen('heatStress', (p, h) => h.num(h.detail('temperature')) >= HEAT_OUTDOOR_C),
+        (p, h) => (needsHarness(h) && h.isBlank(h.detail('anchors')))
           ? 'Record the anchor points used for restraint or fall arrest.' : null,
-        (p, h) => (/arrest|Several/i.test(h.detail('fallProtection')) && h.isBlank(h.detail('rescuers')))
+        (p, h) => (isFallArrest(h) && h.isBlank(h.detail('rescuers')))
           ? 'Name the rescuers when fall arrest is used.' : null,
+        (p, h) => {
+          if (!isFallArrest(h)) return null;
+          const have = h.num(h.detail('clearanceAvailable'));
+          const need = h.num(h.detail('clearanceNeeded'));
+          if (Number.isNaN(have) || Number.isNaN(need)) return 'Record the clear distance below and the clearance the fall arrest system needs.';
+          return have < need
+            ? `Only ${have} m is clear below, but the fall arrest system needs ${need} m. The worker would hit the ground or structure first. Use restraint or an SRL instead.` : null;
+        },
         (p, h) => (/scaffold|tower/i.test(h.detail('access')) && h.isBlank(h.detail('platformTag')))
           ? 'Record the scaffold or tower tag number and last inspection date.' : null,
         (p, h) => (/MEWP/.test(h.detail('access')) && h.isBlank(h.detail('mewp')))
           ? 'Record the MEWP ID, certificate and operator card.' : null,
+        (p, h) => (/Ladder/.test(h.detail('access')) && h.num(h.detail('height')) > 2 && !needsHarness(h))
+          ? 'Above 2 m, people on a ladder need a harness and safety line (ADOSH-SF CoP 37.0). Choose restraint or fall arrest.' : null,
+        (p, h) => (/MEWP|Suspended|Rope access/.test(h.detail('access')) && (h.isBlank(h.detail('windLimit')) || h.isBlank(h.detail('windReading'))))
+          ? 'Record the wind limit and the wind speed at working height for MEWPs, cradles and rope access.' : null,
         (p, h) => {
           const limit = h.num(h.detail('windLimit'));
           const now = h.num(h.detail('windReading'));
@@ -405,7 +446,7 @@
         { key: 'edgesReinstated', label: 'Edge protection and opening covers left in place or refitted', required: true },
         { key: 'platformTagged', label: 'Scaffold or platform tag updated, or handed over or dismantled' },
         { key: 'mewpStowed', label: 'MEWP lowered, stowed, isolated and keys removed' },
-        { key: 'harnessesChecked', label: 'Harnesses checked after use; any that arrested a fall taken out of use' },
+        { key: 'harnessesChecked', label: 'Any harness or SRL that arrested a fall taken out of use until examined' },
         { key: 'zoneRemoved', label: 'Exclusion zone removed only after the area above is clear' },
         { key: 'incidentsReported', label: 'Any fall, arrested fall or dropped object reported' },
       ],
@@ -426,14 +467,19 @@
         { key: 'groundCondition', label: 'Ground condition', kind: 'select', required: true, options: ['Dry', 'Wet (water table, groundwater or rain)'] },
         { key: 'support', label: 'Side support', kind: 'select', required: true, options: SUPPORT_METHODS },
         { key: 'batterAngle', label: 'Batter angle from horizontal', unit: 'degrees', kind: 'number', min: 0, hint: 'Needed when the sides are battered or sloped' },
-        { key: 'tempWorks', label: 'Support design reference and engineer', kind: 'text' },
+        { key: 'tempWorks', label: 'Support design or rock assessment reference, and who made it', kind: 'text',
+          hint: 'An engineer\'s design allows steeper sides; a competent person\'s written assessment is needed for unsupported rock' },
+        { key: 'setBack', label: 'Spoil and plant kept back from the edge', unit: 'm', kind: 'number', required: true, min: 0, hint: 'At least 0.6 m, or more if the competent person says so' },
         { key: 'nocs', label: 'Utility and authority NOC numbers, with expiry dates', kind: 'list', required: true },
         { key: 'drawings', label: 'Utility and as-built drawings reviewed', kind: 'text', required: true },
         { key: 'locator', label: 'Cable locator serial, calibration due date and operator', kind: 'text', required: true },
         { key: 'servicesFound', label: 'Services found: type, depth, how marked, trial hole', kind: 'list', required: true, hint: 'Write "None found" if the search found none' },
+        { key: 'gasSource', label: 'Possible gas source (sewer, fuel or gas line, landfill, engines or pumps in or near the dig)?', kind: 'select', required: true, options: YES_NO, full: true },
         { key: 'confinedSpace', label: 'Could the excavation be a confined space (gases, depth, hard to get out)?', kind: 'select', required: true, options: YES_NO, full: true },
+        { key: 'overheadLines', label: 'Overhead power lines within reach of the plant?', kind: 'select', required: true, options: YES_NO },
         { key: 'access', label: 'Ladders, ramps or steps for getting in and out', kind: 'text' },
         { key: 'roadApproval', label: 'Traffic Police approval for road works', kind: 'text' },
+        { key: 'temperature', label: 'Forecast maximum temperature', unit: '°C', kind: 'number', required: true },
         { key: 'lastInspection', label: 'Last competent-person inspection', kind: 'datetime', required: true, hint: 'Before this shift' },
       ],
       checks: [
@@ -442,48 +488,70 @@
         { key: 'nocs', label: 'Utility and authority NOCs obtained and valid for this dig area', required: true },
         { key: 'drawingsReviewed', label: 'Utility drawings and as-built plans reviewed for the dig area', required: true },
         { key: 'scanned', label: 'Area scanned with a calibrated cable locator by a trained person', required: true },
-        { key: 'marked', label: 'Located services marked on the ground with pegs or paint', required: true },
-        { key: 'trialHoles', label: 'Trial holes hand dug to confirm position and depth of services', required: true },
-        { key: 'noMachineNearServices', label: 'No machine digging within 0.5 m of known services; hand tools only', required: true },
+        { key: 'marked', label: 'Located services marked on the ground, or the search found none', required: true },
+        { key: 'trialHoles', label: 'Trial holes hand dug to confirm services, or the search found none', required: true },
+        { key: 'noMachineNearServices', label: 'Within 0.5 m of services: GRP shovels and spades or vacuum dig only, no picks', required: true },
         { key: 'banksman', label: 'Banksman for machine digging within 3 m of known services' },
+        { key: 'plantSeparation', label: 'Nobody in the trench or slew radius while the bucket works; banksman or zone' },
+        { key: 'overheadControls', label: 'Goalposts and height limiters under overhead lines, or written isolation' },
         { key: 'sidesSupported', label: 'Sides supported, battered or benched where over 1.2 m or unstable', required: true },
-        { key: 'spoilBack', label: 'Spoil, materials and plant kept back from the edge', required: true },
+        { key: 'spoilBack', label: 'Spoil, materials and plant kept back from the edge as recorded', required: true },
         { key: 'edgeBarriers', label: 'Rigid 950 mm barriers where a fall is over 2 m; edges marked below that', required: true },
-        { key: 'safeAccess', label: 'Safe way in and out; ladders tied and 1 m above ground', required: true },
+        { key: 'safeAccess', label: 'Safe way in and out where people enter; ladders tied, 1 m above ground', required: true },
         { key: 'wheelStops', label: 'Wheel stops set where plant works near the edge' },
         { key: 'warningLights', label: 'Warning lights on edges for darkness and public areas' },
         { key: 'structures', label: 'Nearby structures, walls and footings checked for stability' },
         { key: 'water', label: 'Groundwater and surface water controlled; discharge planned' },
         { key: 'servicesProtected', label: 'Exposed services supported and protected' },
         { key: 'inspected', label: 'Excavation inspected by a competent person before this shift', required: true },
-        { key: 'emergency', label: 'Emergency and rescue arrangements in place, including for collapse', required: true },
+        { key: 'emergency', label: 'Emergency plan covers collapse, flooding and service strike; numbers posted', required: true },
         { key: 'traffic', label: 'Traffic management and Traffic Police approval for road works' },
+        { key: 'heatStress', label: 'Heat stress controls in place: water, rest, shade, summer midday break' },
       ],
       gasTest: {
         required: false, beforeWhat: 'anyone enters the excavation',
-        requiredWhen: (p, h) => h.detail('confinedSpace') === 'Yes',
-        hint: 'Needed where the excavation could be a confined space or gases can collect. Test oxygen first, then flammable gas, then toxic gases.',
+        requiredWhen: (p, h) => h.detail('confinedSpace') === 'Yes' || (h.detail('gasSource') === 'Yes' && h.num(h.detail('depth')) > 1.2),
+        hint: 'Needed where the excavation could be a confined space, or is over 1.2 m deep near a gas source. Test oxygen first, then flammable gas, then toxic gases, and keep testing during the shift (ADOSH-SF CoP 29.0 s3.10).',
         failAdvice: 'Do not enter the excavation. Ventilate and test again.',
         limits: [OXYGEN, FLAMMABLE, H2S, CO],
       },
       rules: [
-        (p, h) => (h.num(h.detail('depth')) > 1.2 && /^None needed/.test(h.detail('support')))
-          ? 'Excavations deeper than 1.2 m need support, battering or benching (ADOSH-SF CoP 29.0).' : null,
+        (p, h) => {
+          const support = h.detail('support');
+          if (!(h.num(h.detail('depth')) > 1.2)) return null;
+          if (/^None needed/.test(support)) return 'Excavations deeper than 1.2 m need support, battering or benching (ADOSH-SF CoP 29.0).';
+          if (/^None – stable rock/.test(support) && (h.detail('groundType') !== 'Rock' || h.isBlank(h.detail('tempWorks')))) {
+            return 'Unsupported sides deeper than 1.2 m are only allowed in stable rock, with a competent person\'s written assessment recorded.';
+          }
+          return null;
+        },
         (p, h) => {
           if (!/Battered|Benched/.test(h.detail('support'))) return null;
           const angle = h.num(h.detail('batterAngle'));
           if (Number.isNaN(angle)) return 'Record the batter angle.';
-          const slope = SAFE_SLOPES[h.detail('groundType')];
-          if (!slope || !h.isBlank(h.detail('tempWorks'))) return null;
-          const max = /^Wet/.test(h.detail('groundCondition')) ? slope.wet : slope.dry;
+          if (!h.isBlank(h.detail('tempWorks'))) return null;
+          const ground = h.detail('groundType');
+          const wet = /^Wet/.test(h.detail('groundCondition'));
+          // Fill, unknown ground and rock have no Table 1 value: use the
+          // flattest one (wet silt) unless a design is recorded.
+          const slope = SAFE_SLOPES[ground] || SAFE_SLOPES.Silt;
+          const max = SAFE_SLOPES[ground] ? (wet ? slope.wet : slope.dry) : slope.wet;
+          const what = SAFE_SLOPES[ground] ? `${ground.toLowerCase()} in ${wet ? 'wet' : 'dry'} ground` : `${ground.toLowerCase()} (no Table 1 value, so the flattest is used)`;
           return angle > max
-            ? `A ${angle}° batter is steeper than the ${max}° safe slope for ${h.detail('groundType').toLowerCase()} in ${/^Wet/.test(h.detail('groundCondition')) ? 'wet' : 'dry'} ground (ADOSH-SF CoP 29.0 Table 1). Flatten it, or record the engineer's design.` : null;
+            ? `A ${angle}° batter is steeper than the ${max}° safe slope for ${what} (ADOSH-SF CoP 29.0 Table 1). Flatten it, or record the engineer's design.` : null;
         },
         (p, h) => (h.detail('confinedSpace') === 'Yes' && h.isBlank(p.otherPermits))
           ? 'An excavation that could be a confined space also needs a confined space entry permit. Enter its number under "Other permits for this job".' : null,
+        (p, h) => {
+          const v = h.num(h.detail('setBack'));
+          return (!Number.isNaN(v) && v < 0.6) ? 'Keep spoil and plant at least 0.6 m back from the edge.' : null;
+        },
         requireCheckWhen('banksman', (p, h) => /Mechanical|Several/.test(h.detail('method'))
           && !(h.detail('servicesFound') || []).every((x) => /^none found/i.test(String(x).trim()))),
+        requireCheckWhen('plantSeparation', (p, h) => /Mechanical|Piling|Boring|Several/.test(h.detail('method'))),
+        requireCheckWhen('overheadControls', (p, h) => h.detail('overheadLines') === 'Yes'),
         requireCheckWhen('traffic', (p, h) => !h.isBlank(h.detail('roadApproval'))),
+        requireCheckWhen('heatStress', (p, h) => h.num(h.detail('temperature')) >= HEAT_OUTDOOR_C),
       ],
       closeout: [
         { key: 'allOut', label: 'People, plant and tools out of the excavation', required: true },
@@ -492,7 +560,7 @@
         { key: 'siteSecured', label: 'Site secured against unauthorised entry', required: true },
         { key: 'warningTape', label: 'Warning tape laid over services during backfill' },
         { key: 'shoringRemoved', label: 'Shoring removed by competent people as backfill went in' },
-        { key: 'dewatering', label: 'Dewatering stopped; water disposed of properly, not into drains' },
+        { key: 'dewatering', label: 'Dewatering kept running or safely stopped; discharge as approved (CoP 54.0)' },
         { key: 'recorded', label: 'Location and depth of exposed services recorded for as-built drawings' },
       ],
     },
@@ -504,7 +572,7 @@
       personInChargeLabel: 'Permit holder (in charge of the work)',
       maxValidityHours: 12,
       isolations: true,
-      isolationHint: 'List every energy source, including stored energy and back-feeds. Isolate at an isolating device (breaker, isolator, valve, blind), not a control switch. Each point needs its own lock and tag, and zero energy must be proven before work starts.',
+      isolationHint: 'List every energy source, including stored energy and back-feeds. Isolate at an isolating device (breaker, isolator, valve, blind), not a stop button, selector, interlock or drive. Each point needs its own lock and tag, and zero energy must be proven before work starts. Isolations can stay in place across shifts under the isolation register; this permit is revalidated or reissued each shift and the incoming permit holder re-checks them.',
       energyTypes: ['Electrical', 'Stored electrical (capacitors, batteries, UPS)', 'Back-feed (generator, solar, VFD)', 'Mechanical', 'Gravity or springs', 'Hydraulic', 'Pneumatic', 'Chemical / process', 'Thermal'],
       fields: [
         { key: 'equipment', label: 'Equipment or circuit, with tag number', kind: 'text', required: true, hint: 'As shown on the single-line diagram, P&ID or equipment register' },
@@ -515,7 +583,7 @@
         { key: 'voltage', label: 'System voltage', unit: 'V', kind: 'number', min: 0, hint: 'Needed for electrical isolation' },
         { key: 'tester', label: 'Voltage tester ID and calibration due date', kind: 'text', hint: 'Needed for electrical isolation; rated for the system voltage' },
         { key: 'zeroEnergyMethod', label: 'How zero energy was proven (test points and results)', kind: 'textarea', required: true,
-          hint: 'For example no voltage on any conductor, try-start from the local control then back to off, gauge at 0 bar' },
+          hint: 'For example no voltage between all conductors and to earth (L-L, L-N, L-E, N-E), try-start from the local control then back to off, vent open with no flow' },
         { key: 'hazardousArea', label: 'In a hazardous (classified) area?', kind: 'select', required: true, options: YES_NO },
         { key: 'liveWork', label: 'Live work or live testing needed?', kind: 'select', required: true, options: YES_NO },
         { key: 'isolatingAuthority', label: 'Isolating authority', kind: 'text', required: true, group: 'People', hint: 'The person authorised to apply and remove the isolations' },
@@ -552,6 +620,11 @@
         limits: [FLAMMABLE],
       },
       rules: [
+        (p) => {
+          const bad = (p.isolations || []).filter((r) => r && CONTROL_DEVICE.test(`${r.point || ''} ${r.method || ''}`));
+          return bad.length
+            ? `Stop buttons, selectors, interlocks, PLCs and drives are control devices, not isolating devices (${bad.map((r) => String(r.point || '').slice(0, 30)).join(', ')}). Isolate at the breaker, isolator or valve.` : null;
+        },
         (p, h) => h.detail('liveWork') === 'Yes'
           ? 'This permit does not cover live work or live testing. That needs separate written authorisation from a competent authority, endorsed by senior management (ADOSH-SF CoP 15.0 s3.9).' : null,
         (p, h) => (isElectrical(p) && h.isBlank(h.detail('electrician')))
@@ -592,7 +665,12 @@
         { key: 'tools', label: 'Tools, plant and vehicles used', kind: 'text' },
         { key: 'chemicals', label: 'Chemicals used', kind: 'text', hint: 'Safety data sheets must be at the work' },
         { key: 'ppe', label: 'PPE required', kind: 'text', required: true },
-        { key: 'pressureTest', label: 'Pressure test: medium, test pressure, relief setting, exclusion zone', kind: 'textarea', hint: 'Needed for pressure testing, from the approved test procedure' },
+        { key: 'hazardousArea', label: 'In a hazardous (classified) area?', kind: 'select', required: true, options: YES_NO },
+        { key: 'isolationNeeded', label: 'Plant needs isolating for this work?', kind: 'select', required: true, options: YES_NO },
+        { key: 'isolationCert', label: 'Isolation certificate or ISO permit number', kind: 'text', hint: 'Needed when plant is isolated' },
+        { key: 'pressureMedium', label: 'Pressure test medium', kind: 'select', options: ['Hydrostatic (water)', 'Pneumatic (air or gas)'], hint: 'Needed for pressure testing' },
+        { key: 'pressureTest', label: 'Pressure test: test pressure, relief setting, exclusion zone', kind: 'textarea', hint: 'Needed for pressure testing, from the approved test procedure' },
+        { key: 'temperature', label: 'Forecast maximum temperature', unit: '°C', kind: 'number', required: true },
         { key: 'safetyEquipmentOut', label: 'Safety-critical equipment taken out of service, controls, and who was told', kind: 'textarea',
           hint: 'For example a fire alarm zone or deluge system (ADOSH-SF CoP 21.0 s3.8)' },
         { key: 'gasTestNeeded', label: 'Gas test needed?', kind: 'select', required: true, options: YES_NO,
@@ -605,14 +683,16 @@
         BRIEFED,
         NEARBY,
         { key: 'siteInspected', label: 'Work site inspected by the issuer with the area owner before issue', required: true },
-        { key: 'isolationConfirmed', label: 'Isolation certificate attached and isolations checked, or none needed', required: true },
-        { key: 'otherPermits', label: 'Other permits needed are in place (hot work, height, confined space, isolation, digging)', required: true },
+        { key: 'isolationConfirmed', label: 'Isolation certificate attached; isolations checked on site' },
+        { key: 'otherPermits', label: 'Other permits needed are linked (hot work, confined space, height, digging, lifting)', required: true },
+        { key: 'exEquipment', label: 'Hazardous area: only Ex-rated equipment, or a hot work permit for anything else' },
         { key: 'toolsInspected', label: 'Tools and equipment inspected and fit for use', required: true },
         { key: 'ppeWorn', label: 'PPE listed on the permit issued and worn', required: true },
         { key: 'emergencyKnown', label: 'Emergency arrangements known: alarm, muster point, first aider', required: true },
         { key: 'barricaded', label: 'Work area barricaded and signed' },
         { key: 'depressurised', label: 'Equipment drained, depressurised and flushed or purged before opening' },
         { key: 'pressureTestControls', label: 'Pressure test: exclusion zone set, test pressure and relief confirmed' },
+        { key: 'pneumaticApproved', label: 'Pneumatic test approved by an engineer, exclusion zone calculated' },
         { key: 'safetyEquipmentApproved', label: 'Safety-critical equipment out of service approved; people affected told' },
         { key: 'temporaryPower', label: 'Temporary power at 110 V with RCD protection; cables undamaged' },
         { key: 'sds', label: 'Safety data sheets at the work and chemical controls in place' },
@@ -621,18 +701,27 @@
       ],
       gasTest: {
         required: false, beforeWhat: 'work starts',
-        requiredWhen: (p, h) => h.detail('gasTestNeeded') === 'Yes',
-        hint: 'Test oxygen and flammable gas, and H₂S or CO where the risk assessment says so.',
+        requiredWhen: (p, h) => h.detail('gasTestNeeded') === 'Yes' || h.detail('hazardousArea') === 'Yes'
+          || /Opening lines|Chemical cleaning/.test(h.detail('category')),
+        hint: 'Needed when opening lines, chemical cleaning, in hazardous areas, or where the issuer says so. Test oxygen and flammable gas, and H₂S or CO where the risk assessment says so.',
         failAdvice: 'Do not start work. Find the source, ventilate and test again.',
         limits: [OXYGEN, FLAMMABLE,
           Object.assign({}, H2S, { optional: true, limitText: H2S.limitText + ' where tested' }),
           Object.assign({}, CO, { optional: true, limitText: CO.limitText + ' where tested' })],
       },
       rules: [
-        (p, h) => (/Pressure/.test(h.detail('category')) && h.isBlank(h.detail('pressureTest')))
-          ? 'Record the pressure test details.' : null,
+        (p, h) => (/Pressure/.test(h.detail('category')) && (h.isBlank(h.detail('pressureTest')) || h.isBlank(h.detail('pressureMedium'))))
+          ? 'Record the pressure test medium and details.' : null,
+        (p, h) => (/Scaffold/.test(h.detail('category')) && h.isBlank(p.otherPermits))
+          ? 'Scaffold erection and dismantling is work at height. Enter the work at height permit number under "Other permits for this job".' : null,
+        (p, h) => (h.detail('isolationNeeded') === 'Yes' && h.isBlank(h.detail('isolationCert')))
+          ? 'Record the isolation certificate or ISO permit number.' : null,
+        requireCheckWhen('isolationConfirmed', (p, h) => h.detail('isolationNeeded') === 'Yes'),
+        requireCheckWhen('exEquipment', (p, h) => h.detail('hazardousArea') === 'Yes'),
         requireCheckWhen('pressureTestControls', (p, h) => /Pressure/.test(h.detail('category'))),
-        requireCheckWhen('depressurised', (p, h) => /Opening lines/.test(h.detail('category'))),
+        requireCheckWhen('pneumaticApproved', (p, h) => /Pressure/.test(h.detail('category')) && /Pneumatic/.test(h.detail('pressureMedium'))),
+        requireCheckWhen('depressurised', (p, h) => /Opening lines|Chemical cleaning/.test(h.detail('category'))),
+        requireCheckWhen('heatStress', (p, h) => h.num(h.detail('temperature')) >= HEAT_OUTDOOR_C),
         requireCheckWhen('sds', (p, h) => !h.isBlank(h.detail('chemicals'))),
         requireCheckWhen('safetyEquipmentApproved', (p, h) => !h.isBlank(h.detail('safetyEquipmentOut')) || /safety-critical/.test(h.detail('category'))),
       ],

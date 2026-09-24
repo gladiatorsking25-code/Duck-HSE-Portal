@@ -26,25 +26,43 @@ No install; runs in any modern browser on phone, tablet or desktop.
     and limits against the site's own permit system before the portal is used on
     a live site.**
   - **Rules that stop a permit being issued**, for example:
-    - Gas tests record the time, tester and detector. Oxygen must be 19.5–23.5 %
-      and flammable gas below 5 % LEL; confined spaces also test H₂S and CO. The
-      latest test decides. Confined space entry always needs a test; hot work
-      needs one in hazardous areas, confined spaces, near live plant and on
-      containers that held flammables; excavations need one when they could be a
-      confined space.
-    - Hot work cannot go ahead with sprinklers impaired, and cannot be closed
-      until the fire watch has run for at least 1 hour after the work ended.
-    - Excavations deeper than 1.2 m need support, and battered sides are checked
-      against the safe slope for the ground type (CoP 29.0 Table 1) unless an
-      engineer's design is recorded.
-    - Work at height asks for anchors, named rescuers, scaffold tags or MEWP
-      details depending on the equipment, and refuses to start above the wind
-      limit.
+    - Gas tests record the time, where the reading was taken, the tester and the
+      detector. Oxygen must be 19.5–23.5 % and flammable gas below 5 % LEL;
+      confined spaces and excavations also test H₂S (no more than 1 ppm) and CO
+      (no more than 25 ppm). Every reading in the latest round must pass, and the
+      round must be no more than 2 hours before the permit starts. Confined space
+      entry always needs a test; hot work needs one in hazardous areas, confined
+      spaces, near live plant and on containers; excavations when they could be a
+      confined space or are over 1.2 m deep near a gas source; general work when
+      opening lines, chemical cleaning or in a hazardous area.
+    - The issuer and the permit holder, the fire watcher and the welders, and the
+      standby person and the entrants must be different people.
+    - Hot work cannot go ahead with sprinklers impaired, and cannot be closed until
+      the fire watch has run for at least 1 hour after the work ended and any
+      isolated detectors are restored.
+    - Confined spaces list the other gases to test for when the space held fuel,
+      chemicals, sewage or inert gas, or when oxygen is below 20.5 %, and need heat
+      controls and a time limit at 30 °C or more inside.
+    - Work at height: for falls of 2 m or more, guardrails or nets, or a recorded
+      reason why not; fall arrest needs anchors, named rescuers and enough clear
+      distance below for the lanyard or SRL; ladders above 2 m need a harness;
+      MEWPs, cradles and rope access need a wind limit and reading, and work stops
+      above the limit.
+    - Excavations deeper than 1.2 m need support (unsupported only in rock with a
+      written assessment); battered sides are checked against the safe slope for
+      the ground type (CoP 29.0 Table 1), using the flattest slope for fill or
+      unknown ground, unless an engineer's design is recorded.
     - Energy isolation lists each isolation point with its lock number, who
-      isolated it and proof of zero energy.
+      isolated it and proof of zero energy; stop buttons, interlocks and drives are
+      refused as isolation; live work is refused; electrical isolation records the
+      authorised electrician, system voltage and tester.
+    - Heat stress controls become required at a forecast 35 °C or more (CoP 11.0)
+      for work at height, excavation and general work.
     - Precautions that only apply sometimes (flashback arrestors for gas cutting,
-      a proven voltage tester for electrical isolation) become required when they
-      apply.
+      a proven voltage tester for electrical isolation, tower checks for mobile
+      towers) become required when they apply.
+  - **Records.** Deleting a permit warns that CoP 21.0 asks for permit records to
+    be kept for at least 1 year.
   - **Close-out.** Closing a permit records who closed it, when, and the
     close-out checks; closed permits are read-only. Permits linked to a project
     update the tracked item (suspended = open, closed or expired = closed).
@@ -55,7 +73,7 @@ No install; runs in any modern browser on phone, tablet or desktop.
     are read as lifting permits, with the same checklist and critical-lift rules.
   - **Fixes.** Permit fields, status banners and the list are escaped before
     display. New permits get sensible default times again.
-  - **Tests.** 20 unit tests for the permit rules (`test/permit-types.test.mjs`);
+  - **Tests.** 27 unit tests for the permit rules (`test/permit-types.test.mjs`);
     the browser test issues a confined space permit (refused on low oxygen),
     tracks and closes it on a project, and checks the hot work fire watch.
 
