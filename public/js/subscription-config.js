@@ -31,7 +31,7 @@ const SUBSCRIPTION_CONFIG = {
 
   // Shown on the paywall — says what the subscription funds. Keeps it honest and
   // attractive: people subscribe to a maintained, improving tool.
-  PLAN_NOTE: 'Your subscription keeps Duck HSE Portal maintained and updated — new crane data, monthly checklists, safety features, and support.',
+  PLAN_NOTE: 'Your subscription keeps Duck HSE Portal maintained and updated: new HSE modules and checklists, safety features, and support.',
   // A UAE-consumer-law-friendly one-liner (auto-renewal + VAT + cancellation are
   // also spelled out in the Terms).
   PLAN_TERMS: 'Includes a 14-day free trial, then $5 / month. Auto-renews monthly until you cancel: on the web from "Manage plan", in the Android app from Google Play. Price includes VAT where applicable.',

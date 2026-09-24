@@ -1,13 +1,40 @@
 # Duck HSE Portal — Web App
 
-A browser-based rebuild of the original WinForms crane lifting assessment tool, for
-daily lift assessments, permit-to-work management, and record keeping — no install,
-runs from any browser, deployable free on GitHub Pages.
+An HSE portal for teams: projects and tracked actions, equipment inspections, HSE
+audit evidence packs, and lifting operations (crane lift assessments and lifting
+permits). It started as a browser rebuild of a WinForms crane lifting assessment tool.
+No install; runs in any modern browser on phone, tablet or desktop.
 
-> **Trial · educational use only.** Not for real operational lift decisions.
+> Supports, never replaces, competent-person decisions.
 > Developed by **Sabir Amin** — sabiriis143@gmail.com.
 
 ## Changelog
+
+- **For all of HSE, and a safer "Delete my data" (v1.10.0)**
+  - **Erasing data needs your password.** The Delete my data page is still public
+    (Google Play requires that), so anyone can read it and ask for an account to be
+    deleted. Erasing data from the device now needs you to be signed in and to
+    re-enter your password; signed-out visitors get no erase button, and a copy of
+    the portal without sign-in set up shows none at all. Erasing also signs you out.
+    The password-free "Erase all local data" button on the settings page now leads
+    to that page instead.
+  - **Dashboard for all HSE work.** Open projects, inspections due or overdue,
+    equipment not fit for use and active lifting permits; a tile for each module
+    (projects, inspections, audits, lifting operations); a "Coming due" list of
+    inspections and permits; and recent records from every module. Everything on
+    it is escaped before display.
+  - **Menus and wording.** The menu is grouped into Overview, Inspections, Audits,
+    Lifting operations and Settings, with the lift tools and lifting permits named
+    as such. The general warning banner, footer, sign-in page, consent screen,
+    About page, app and Play shortcuts, and page descriptions now describe an HSE
+    portal; the load-chart and ADOSH-SF CoP 34.0 warnings stay on the lifting
+    pages. "Fleet & backup" is now "Settings & backup".
+  - **Terms and Privacy** now describe the whole HSE portal and where data really
+    lives (account, projects and synced records in Firebase; photos and audit
+    evidence on the device). The consent screen asks everyone to accept the
+    updated terms once.
+  - **Tests.** The browser test now checks the dashboard and that erasing needs
+    the password.
 
 - **Card payments on the website (v1.9.0)**: customers can now subscribe by
   card with Stripe Checkout. Setup guide: `docs/PAYMENTS.md`.

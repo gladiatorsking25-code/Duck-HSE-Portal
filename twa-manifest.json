@@ -24,25 +24,25 @@
   "iconUrl": "https://HOST_DOMAIN/assets/icons/icon-512.png",
   "maskableIconUrl": "https://HOST_DOMAIN/assets/icons/icon-maskable-512.png",
   "splashScreenFadeOutDuration": 300,
-  "appVersionName": "1.9.0",
-  "appVersionCode": 16,
+  "appVersionName": "1.10.0",
+  "appVersionCode": 17,
   "shortcuts": [
     {
-      "name": "New assessment",
-      "shortName": "Assess",
+      "name": "Projects",
+      "shortName": "Projects",
+      "url": "/projects.html",
+      "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
+    },
+    {
+      "name": "New inspection",
+      "shortName": "Inspect",
+      "url": "/checklist.html",
+      "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
+    },
+    {
+      "name": "New lift assessment",
+      "shortName": "Lift",
       "url": "/assessment.html",
-      "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
-    },
-    {
-      "name": "New permit",
-      "shortName": "Permit",
-      "url": "/permit.html",
-      "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
-    },
-    {
-      "name": "History",
-      "shortName": "History",
-      "url": "/history.html",
       "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
     }
   ],
@@ -58,7 +58,7 @@
   "isMetaQuest": false,
   "fullScopeUrl": "https://HOST_DOMAIN/",
   "minSdkVersion": 21,
-  "appVersion": "1.9.0",
+  "appVersion": "1.10.0",
   "signingKey": {
     "path": "./android.keystore",
     "alias": "android"

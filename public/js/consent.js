@@ -3,14 +3,15 @@
 // signed-in user has seen and accepted the Terms of Use / Privacy Notice
 // before the app is used, which matters both for UAE PDPL (Federal Decree-Law
 // No. 45 of 2021) lawful-basis-for-processing purposes and for ordinary
-// liability protection given this tool influences real lifting decisions.
+// liability protection given this tool influences real HSE decisions.
 //
 // Like auth.js, this is a CLIENT-SIDE record only — it proves nothing to a
 // server, because there is no server. Treat it as a UX/paper-trail aid, not a
 // substitute for a real consent-logging backend before commercial launch.
 
 const CONSENT_KEY = 'cla_tos_privacy_accepted_v1';
-const CONSENT_VERSION = '2026-09-11';
+// Bump when the Terms or Privacy Notice change, so everyone accepts them again.
+const CONSENT_VERSION = '2026-09-24';
 
 function hasAcceptedConsent() {
   try {
@@ -45,11 +46,11 @@ function requireConsent() {
       <div style="background:#fff;border-radius:4px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto;padding:26px 28px;font-family:'Inter',system-ui,sans-serif;">
         <h2 style="margin:0 0 10px;font-size:18px;">Before you continue</h2>
         <p style="font-size:13.5px;color:#52626d;line-height:1.55;">
-          This is a <strong>trial, educational-use tool</strong> for planning lifting operations. It is
-          not a substitute for the crane's certified load chart, a competent Appointed Person's
-          judgement, or applicable regulations including <strong>ADOSH-SF CoP 34.0</strong>. Names,
-          notes, and signatures you enter are stored only in this browser (no server), as described
-          in the Privacy Notice.
+          Duck HSE Portal helps you plan, record and track HSE work. It is not a substitute for
+          competent-person judgement, your site's procedures, or applicable regulations such as the
+          <strong>ADOSH-SF codes of practice</strong>. For lifting, it does not replace the crane's
+          certified load chart or an Appointed Person's sign-off. What you enter is kept on this
+          device and in your account, as described in the Privacy Notice.
         </p>
         <div style="display:flex; gap:16px; margin:14px 0;">
           <a href="terms.html" target="_blank" rel="noopener" style="font-size:13px;">Read Terms of Use</a>
@@ -58,8 +59,8 @@ function requireConsent() {
         <label style="display:flex; gap:9px; align-items:flex-start; font-size:13.5px; margin-top:6px;">
           <input type="checkbox" id="consentCheckbox" style="margin-top:3px; width:16px; height:16px;">
           <span>I have read and accept the Terms of Use and Privacy Notice, and I understand this
-          tool does not replace the manufacturer's load chart or a qualified Appointed Person's
-          sign-off.</span>
+          tool does not replace competent-person judgement or, for lifting, the manufacturer's load
+          chart and a qualified Appointed Person's sign-off.</span>
         </label>
         <button id="consentAcceptBtn" disabled style="margin-top:16px;width:100%;padding:11px;border-radius:4px;border:none;background:#c8ccd0;color:#fff;font-weight:600;font-size:13.5px;cursor:not-allowed;">
           Accept & continue

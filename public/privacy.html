@@ -17,7 +17,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Duck HSE">
-<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<meta name="description" content="HSE management for teams: projects and action tracking, equipment inspections, HSE audit evidence packs, and lifting operations (crane assessments and lifting permits). Works on phone, tablet and desktop.">
 <link rel="icon" href="assets/icons/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
@@ -55,37 +55,35 @@
         <li>Email addresses you type into the checklist forwarding screen. These are used only to address that one message and are handed straight to your own email app — they are not stored by the App, and there is no address book or sending history;</li>
         <li>Handwritten signatures captured on-screen for permit sign-off;</li>
         <li>Free-text notes you choose to enter;</li>
-        <li>Sign-in identifiers used by the app's access gate (see the Terms of Use and the app's README for how that gate currently works).</li>
+        <li>Your account email address. Your password is held by Google Firebase Authentication and is never visible to the operator;</li>
+        <li>Project details you enter, the actions, inspections, incidents and other items tracked on a project, the project's activity log, and the email addresses of the people you invite to a project.</li>
       </ul>
       <p>It does <strong>not</strong> collect health data, financial/payment card data
       (card payments are handled entirely by Stripe on the website, or by Google Play in the
       Android app, not by this app), precise device location, or advertising identifiers.</p>
 
-      <div class="section-title">2. Where this data is stored today</div>
-      <p>In the current build, all of the data listed above is stored only in your
-      device's browser storage (<code>localStorage</code>), scoped to the page you open
-      the App from. <strong>Nothing is transmitted to any server</strong> — there is no
-      backend in this build. That means:</p>
+      <div class="section-title">2. Where this data is stored</div>
       <ul>
-        <li>The developer/operator cannot see, access, or process your data, because it never leaves your device;</li>
-        <li>Data does not sync between your devices automatically;</li>
-        <li>Clearing your browser's site data, or uninstalling the app if wrapped for
-        an app store, deletes this data permanently unless you have exported a backup
-        (see the Fleet & Backup page).</li>
+        <li><strong>Your account</strong> (email address, free-trial and subscription status), the
+        <strong>projects</strong> you create or join, and a <strong>copy of your checklists, permits and
+        assessments</strong> are stored in Google Firebase (Authentication and Cloud Firestore), which the
+        operator uses as a data processor. See section 3a for where it is hosted.</li>
+        <li>The same checklists, permits and assessments are also kept in your device's browser storage so
+        the App works without a signal.</li>
+        <li><strong>Certificate photos and HSE audit evidence files</strong> stay in your device's browser
+        storage (IndexedDB) and are not uploaded.</li>
+        <li>Members of a project can see its details, tracked items and activity log, and the email
+        addresses of the other members. Nobody else can.</li>
+        <li>The operator can access account and project data only as needed to run the service, for
+        example for support, billing and preventing abuse.</li>
+        <li>Clearing your browser's site data deletes the copy on that device. What is stored in your
+        account stays there until you delete the account (see section 11).</li>
       </ul>
 
-      <div class="section-title">3. If cloud sync / accounts are added later</div>
-      <p>A paid, multi-device version of this App would need a real backend (for
-      example Firebase or Supabase) to sync data and verify subscriptions. If and when
-      that happens, this notice will be updated to name the specific processor(s) used,
-      where they host data, and the safeguards applied to any cross-border transfer, as
-      required by PDPL Articles 20–24. Until this notice is updated to describe such a
-      backend, no such transfer is taking place.</p>
-
-      <div class="section-title">3a. Cross-border transfer, if and when cloud sync is switched on</div>
-      <p>The optional cloud-sync build uses <strong>Google Firebase</strong> (Firebase
-      Authentication and Cloud Firestore) as a data processor. Firebase does not currently
-      offer a UAE data-region, so enabling cloud sync means personal data you enter is
+      <div class="section-title">3a. Cross-border transfer</div>
+      <p>The App uses <strong>Google Firebase</strong> (Firebase Authentication, Cloud Firestore
+      and Cloud Functions) as a data processor. Firebase does not currently offer a UAE
+      data-region, so personal data stored in your account is
       <strong>transferred to and stored outside the UAE</strong> — in whichever Google Cloud
       region the Firestore database is created in, which is chosen once and cannot be changed
       afterwards.</p>
@@ -94,9 +92,9 @@
       covered by an appropriate contractual safeguard or by your explicit consent after being
       informed of the risk. The safeguard relied on here is Google's Cloud Data Processing
       Addendum, together with the consent recorded through the in-app acceptance screen.
-      <strong>If you do not want your data leaving the UAE, do not create a cloud account</strong>
-      — the app is fully functional without one, and local-only data never leaves your device.</p>
-      <p>Before enabling cloud sync commercially, confirm with a UAE-licensed lawyer which
+      Using the App requires an account, so <strong>if you do not want your data leaving the UAE,
+      do not create an account</strong>.</p>
+      <p>Before commercial launch, confirm with a UAE-licensed lawyer which
       Firestore region to choose and whether your specific customers (government or
       critical-infrastructure clients in particular) are subject to data-localisation
       requirements stricter than the general PDPL position.</p>
@@ -119,23 +117,22 @@
       </ul>
 
       <div class="section-title">4. Legal basis for processing</div>
-      <p>Where the App does process personal data (locally, as described above), the
+      <p>Where the App processes personal data (as described above), the
       basis relied on is your consent, given when you accept these terms via the
-      in-app consent screen, and/or the performance of the lift-planning and
-      permit-to-work record-keeping function you are using the App for.</p>
+      in-app consent screen, and/or the performance of the HSE planning, inspection, audit and
+      record-keeping functions you are using the App for.</p>
 
       <div class="section-title">5. Your rights under PDPL</div>
       <p>Subject to the exceptions PDPL provides, you have the right to: request access
       to personal data concerning you; request correction or erasure of it; restrict or
       object to its processing; request its transfer to another controller (data
-      portability); and withdraw consent at any time. Because this build stores data
-      only on your own device, you can exercise most of these rights directly — edit or
-      delete any record from the History, Permits, or Fleet & Backup pages, or use
-      "Erase all local data" on the Fleet & Backup page to remove everything at once.</p>
+      portability); and withdraw consent at any time. You can exercise most of these rights directly: edit or
+      delete your records in the App, export them from the Settings &amp; backup page, or use the
+      <a href="account-deletion.html">Delete your data</a> page.</p>
 
       <div class="section-title">6. Signatures</div>
       <p>On-screen signatures are stored as images alongside the permit record, in the
-      same local storage as everything else. They are used solely to represent sign-off
+      same way as the permit itself. They are used solely to represent sign-off
       on a permit-to-work document and are not analyzed, shared, or used for any other
       purpose by the App.</p>
 
@@ -153,24 +150,23 @@
       App.</p>
 
       <div class="section-title">9. Changes to this notice</div>
-      <p>This notice will be updated as features change (particularly if cloud sync or
-      a payment backend is introduced). The "Last updated" date above will reflect the
-      most recent revision.</p>
+      <p>This notice will be updated as features change. The "Last updated" date above will
+      reflect the most recent revision.</p>
 
       <div class="section-title">10. Retention — how long data is kept</div>
-      <p>Local data is kept on your device until you delete it; nothing expires on its own, and
-      the developer has no ability to delete it for you. If cloud sync is enabled, synced records
-      are kept while the account is active and deleted within 30 days of an account-deletion
-      request, except where a record must be retained to meet a legal obligation (for example
+      <p>Data on your device is kept until you delete it; nothing expires on its own, and the
+      developer has no ability to delete it for you. Data in your account is kept while the account
+      is active and deleted within 30 days of an account-deletion request, except where a record must be retained to meet a legal obligation (for example
       accounting and VAT records relating to a paid subscription, which UAE tax law requires be
       kept for a set period). Retained records are kept only for that purpose and deleted at the
       end of the statutory period.</p>
 
       <div class="section-title">11. How to delete your data</div>
       <p>Every deletion route — erasing all data on the device, uninstalling, and requesting
-      deletion of a cloud account and its synced records — is set out on the
-      <a href="account-deletion.html">Delete your data</a> page, which is publicly reachable
-      without signing in. That page is also the account-deletion URL submitted to Google Play.</p>
+      deletion of your account and the data kept in it — is set out on the
+      <a href="account-deletion.html">Delete your data</a> page. Anyone can read that page and
+      request deletion without signing in; erasing data from a device needs the account's
+      password. It is also the account-deletion URL submitted to Google Play.</p>
 
       <div class="section-title">12. Data controller and contact</div>
       <p>The data controller is the developer/operator of the App, whose current contact details
@@ -180,12 +176,10 @@
       Google Play's developer-verification rules require.</p>
 
       <div class="section-title">13. Google Play Data Safety</div>
-      <p>The answers given in the Play Console Data Safety form mirror this notice: in the
-      standard build, no data is collected or shared by the developer, all data stays on the
-      device, and the user can request deletion. If cloud sync is enabled in a published build,
-      that form will be updated the same day to declare the data types collected, that they are
-      transmitted over HTTPS, and that deletion can be requested — Google checks the form against
-      the app's actual behaviour, and a mismatch is a policy violation.</p>
+      <p>The answers given in the Play Console Data Safety form must mirror this notice: the data
+      types stored in your account (section 2), that they are transmitted over HTTPS, and that
+      deletion can be requested. Google checks the form against the app's actual behaviour, and a
+      mismatch is a policy violation.</p>
 
     </div>
   </div>

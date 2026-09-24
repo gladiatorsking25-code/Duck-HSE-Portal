@@ -835,3 +835,11 @@ body.modal-open { overflow: hidden; }
   .certificate-modal-grid { grid-template-columns:1fr; }
   .certificate-modal-grid .full { grid-column:auto; }
 }
+
+/* Dashboard: one tile per HSE module */
+.module-card { display: flex; flex-direction: column; gap: 8px; }
+.module-card h3 { margin: 0; font-size: 15px; }
+.module-card p { margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+.module-card .module-links { display: flex; gap: 14px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; font-size: 13px; font-weight: 600; }
+@media (max-width: 560px) { .module-grid { grid-template-columns: 1fr; } }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
