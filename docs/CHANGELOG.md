@@ -11,6 +11,41 @@ No install; runs in any modern browser on phone, tablet or desktop.
 
 ## Changelog
 
+- **Project files, photos and backups in Google Drive (v1.12.0)**
+  - **Files and photos on every project.** Editors, managers and the owner can add
+    method statements, risk assessments, certificates, drawings, emails and site
+    photos to a project, with a kind, a note, and optionally a link to a tracked
+    item (the item's window lists its files and has **Attach a file**). Every
+    member can search, download and view them; photos open on screen. Editors can
+    delete their own files, managers any file. Up to 7 MB per file; photos over
+    2 MB are made smaller (at most 2400 px) on the device first, which also strips
+    the location data inside them.
+  - **Kept in the portal's Google Drive.** Each project gets its own folder
+    (`<project name> (<id>)`, with `Files` and `Backups` inside) in a shared drive
+    the portal owner controls. Only the Cloud Functions reach Drive, signed in as
+    their own service account, so there is no key file to leak and team members
+    never need a Google account. Settings: `DRIVE_ROOT_FOLDER_ID` and optionally
+    `DRIVE_PROJECT_QUOTA_MB` (2 GB per project by default) in `functions/.env`.
+  - **Safe file handling.** Only listed file types are accepted (no web pages,
+    scripts, programs or archives); the stored type comes from the extension, and
+    PDFs, photos and Office files must really be what their extension says. Only
+    photos are ever shown in the app; everything else is saved as a download. File
+    records can only be written by the server (Firestore rules), and a file can only
+    be reached through a project its caller belongs to.
+  - **Backups.** Every night at 02:00 UAE time, each project that changed is backed
+    up to its `Backups` folder as JSON (details, tracked items, file list, recent
+    activity). Owners and managers can also **Back up now**, **Download** a backup,
+    and **Restore items**, which puts the tracked items back as they were (items
+    added since are removed); a backup of the current state is made first, so a
+    restore can be undone. Each project keeps 30 nightly, 20 manual and 10
+    before-restore backups.
+  - **Privacy and Terms** describe project files and backups, so everyone is asked
+    to accept them again once.
+  - **Tests.** 16 unit tests for the file and backup rules (`test/files.test.mjs`),
+    4 new Firestore rules tests, and 4 new browser test steps (upload, photo
+    shrinking, refused files, download and view, item attachments, backup, restore)
+    run against a local stand-in for Drive.
+
 - **Permits to work for all high-risk work (v1.11.0)**
   - **Seven permit types.** Lifting (as before), hot work, confined space entry,
     work at height, excavation, energy isolation (lock-out, tag-out) and general
@@ -665,6 +700,16 @@ js/mailer.js            Address parsing, randomised draft, .eml / mailto / clipb
 js/photo.js             Camera capture + on-device image resize (canvas)
 js/certificate-storage.js  Certificate photo blobs in IndexedDB (out of localStorage)
 js/certificate-report.js   Certificate rows + shareable HTML report + Email/WhatsApp share
+
+--- Projects, files and backups ---
+projects.html + js/projects.js    Project list; Firestore data layer for projects, items, activity
+project.html + js/project-page.js Project dashboard: items, team, activity
+js/project-files.js        Project files, photos and backups panel (talks to the functions below)
+js/project-link.js         Links permits, assessments and checklists to project items
+functions/projects.js      Team membership rules (invites, roles, ownership)
+functions/files.js         File and backup rules: allowed types, sizes, who may delete, restore plan
+functions/project-drive.js Firestore + Drive work behind the file and backup functions
+functions/drive.js         The Google Drive calls (service account), plus the local test stand-in
 
 --- Accounts & subscriptions (activation-ready; see SECURITY.md) ---
 js/subscription-config.js  Trial length, Play product IDs, package name

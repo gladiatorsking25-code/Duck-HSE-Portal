@@ -66,6 +66,8 @@ ephemerally? Optional or required? Purposes?* Recommended answers:
 | **Personal info → Email address** | Yes | No | App functionality; Account management | Used as the cloud account login identifier (Firebase Auth). |
 | **Personal info → User IDs** | Yes | No | App functionality; Account management | Firebase Auth UID; ties records to the account. |
 | **Personal info → Other info** | Yes | No | App functionality | Free-text notes and on-screen **signatures** captured for permit sign-off. Declare here (there is no dedicated "signature" type) and describe it in the field. |
+| **Photos and videos → Photos** | Yes | No | App functionality | Site photos a user adds to a project's files (stored in the operator's Google Drive through Cloud Functions). Optional. |
+| **Files and docs** | Yes | No | App functionality | Documents a user adds to a project (method statements, drawings, certificates), and nightly project backups, stored in the operator's Google Drive. Optional. |
 | **Financial info → Purchase history** | Yes | No | App functionality; Account management | Subscription purchase/entitlement state from Google Play Billing, used to unlock paid features. Payment *card* data is handled entirely by Google Play and is **not** collected by your app — do not tick "User payment info". |
 | **App activity / App info & performance** | No* | — | — | Only tick these if you later add analytics or crash reporting. The base app doesn't. |
 

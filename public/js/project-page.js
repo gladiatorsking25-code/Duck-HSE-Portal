@@ -265,6 +265,7 @@
       ? `Added by ${who(item.createdBy)} on ${fmtWhen(Projects.millis(item.createdAt))}. Last updated by ${who(item.updatedBy)} on ${fmtWhen(Projects.millis(item.updatedAt))}.`
       : '';
     $('itemFormError').innerHTML = '';
+    ProjectFiles.renderItemFiles(item ? item.id : '');
     $('itemModal').hidden = false;
     if (!readOnly) $('iTitle').focus();
   }
@@ -352,13 +353,21 @@
           banner($('notice'), 'danger', 'This project does not exist or you are no longer a member.');
           return;
         }
+        const first = !project;
         project = p;
         $('projectBody').hidden = false;
         $('exportBtn').disabled = false;
         banner($('notice'), '', '');
         renderHead(); renderTeam(); renderStats(); renderItems();
+        if (first) {
+          ProjectFiles.init({
+            projectId, friendly, project: () => project, uid: () => uid, items: () => items,
+            openItemId: () => (!$('itemModal').hidden && editingItem ? editingItem.id : '')
+          });
+        }
+        ProjectFiles.onProject();
       }, () => banner($('notice'), 'danger', 'This project does not exist or you do not have access to it.'));
-      Projects.watchItems(projectId, (list) => { items = list; if (project) { renderStats(); renderItems(); } });
+      Projects.watchItems(projectId, (list) => { items = list; if (project) { renderStats(); renderItems(); ProjectFiles.renderFiles(); } });
       Projects.watchActivity(projectId, renderActivity, 30);
     });
   }).catch((err) => banner($('notice'), 'danger', err.message));

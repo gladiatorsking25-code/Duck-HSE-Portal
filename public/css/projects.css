@@ -50,3 +50,8 @@ tr.is-closed .item-title { color: var(--ink-soft); text-decoration: line-through
 
 .link-project { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .link-project select { max-width: 320px; }
+
+/* Files and photos */
+.file-table td.file-actions { white-space: nowrap; text-align: right; }
+.file-table td.file-actions .btn { margin-left: 4px; }
+#filesMsg .banner, #backupMsg .banner { font-size: 13px; }

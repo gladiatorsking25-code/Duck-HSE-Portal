@@ -75,6 +75,14 @@ beforeEach(async () => {
       dueDate: '', assigneeUid: '', location: '', details: '',
       createdAt: new Date(), createdBy: 'editor', updatedAt: new Date(), updatedBy: 'editor'
     });
+    await setDoc(doc(a, 'projects', 'p1', 'files', 'f1'), {
+      name: 'Lift plan.pdf', ext: 'pdf', mimeType: 'application/pdf', size: 1000, category: 'document',
+      note: '', itemId: '', driveFileId: 'drive1', uploadedBy: 'editor', uploadedByEmail: 'editor@example.com', uploadedAt: new Date()
+    });
+    await setDoc(doc(a, 'projects', 'p1', 'backups', 'b1'), {
+      name: 'backup.json', kind: 'manual', size: 10, itemCount: 1, fileCount: 1, driveFileId: 'drive2', createdAtMs: Date.now()
+    });
+    await setDoc(doc(a, 'driveFolders', 'p1'), { folderId: 'x', filesFolderId: 'y', backupsFolderId: 'z', usedBytes: 1000 });
   });
 });
 
@@ -219,4 +227,32 @@ test('the activity log is append-only and server-stamped', async () => {
   await assertFails(addDoc(col, {
     at: serverTimestamp(), uid: 'owner', email: '', action: 'item.create', itemId: '', summary: 'spoofed'
   }));
+});
+
+// ---- Files and backups (written only by Cloud Functions) -------------------
+test('every member can list and read files; outsiders cannot', async () => {
+  for (const uid of ['owner', 'editor', 'viewer', 'lapsed']) {
+    await assertSucceeds(getDocs(collection(db(uid), 'projects', 'p1', 'files')));
+  }
+  await assertFails(getDoc(doc(db('outsider'), 'projects', 'p1', 'files', 'f1')));
+});
+
+test('nobody can add, change or remove a file record from the app', async () => {
+  const col = collection(db('owner'), 'projects', 'p1', 'files');
+  await assertFails(addDoc(col, { name: 'x.pdf', driveFileId: 'someone-elses-file', uploadedBy: 'owner' }));
+  await assertFails(updateDoc(doc(col, 'f1'), { driveFileId: 'someone-elses-file' }));
+  await assertFails(deleteDoc(doc(col, 'f1')));
+});
+
+test('only the owner and managers can see backups, and nobody can write them', async () => {
+  await assertSucceeds(getDocs(collection(db('owner'), 'projects', 'p1', 'backups')));
+  await assertSucceeds(getDoc(doc(db('manager'), 'projects', 'p1', 'backups', 'b1')));
+  await assertFails(getDoc(doc(db('editor'), 'projects', 'p1', 'backups', 'b1')));
+  await assertFails(getDoc(doc(db('viewer'), 'projects', 'p1', 'backups', 'b1')));
+  await assertFails(updateDoc(doc(db('owner'), 'projects', 'p1', 'backups', 'b1'), { driveFileId: 'x' }));
+});
+
+test('Drive folder records are server only', async () => {
+  await assertFails(getDoc(doc(db('owner'), 'driveFolders', 'p1')));
+  await assertFails(setDoc(doc(db('owner'), 'driveFolders', 'p1'), { filesFolderId: 'another-customers-folder' }));
 });

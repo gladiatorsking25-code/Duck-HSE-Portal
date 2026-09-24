@@ -217,10 +217,25 @@ service cloud.firestore {
           && shortText(request.resource.data.get('summary', ''), 300);
         allow update, delete: if false;
       }
+
+      // ---- Files and backups in Google Drive --------------------------------
+      // Written only by the projectFile* / projectBackup* Cloud Functions,
+      // which also do the Drive work. Every member can see the file list;
+      // backups (a copy of everything) are for the owner and managers.
+      match /files/{fileId} {
+        allow read: if isMemberOf(projectDoc(pid));
+        allow write: if false;
+      }
+      match /backups/{backupId} {
+        allow read: if canManage(projectDoc(pid));
+        allow write: if false;
+      }
     }
 
     // Written only by Cloud Functions (Admin SDK); no client access.
     match /purchaseTokens/{token} { allow read, write: if false; }
+    // Each project's Drive folder ids and space used. Server only.
+    match /driveFolders/{pid}     { allow read, write: if false; }
     match /adminLog/{id}          { allow read: if isAdmin(); allow write: if false; }
 
     // Explicit default-deny for everything else.
