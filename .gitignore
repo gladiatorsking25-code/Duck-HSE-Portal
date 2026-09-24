@@ -1,26 +1,24 @@
-# This folder is the website root: GitHub Pages publishes it as-is, so anything
-# committed here is downloadable by anyone. Secrets must live OUTSIDE this
-# folder (see START-HERE.txt step 3); these rules are the backstop if one is
-# ever copied in by mistake.
-#
-# Note: .gitignore only applies when the site is published through git. It does
-# not stop a manual upload of the folder — keep secrets out of it entirely.
-
-# Google Cloud service-account keys
+# Secrets never belong in this repo.
 service-account*.json
 *service-account*.json
 google-services.json
-
-# Environment files (SMTP passwords, admin bootstrap password, key paths)
 .env
 .env.*
 !.env.example
-
-# Private keys and certificates
 *.pem
 *.p12
 *.key
-
-# Android / Play signing keys (twa-manifest.json points at ./android.keystore)
 *.keystore
 *.jks
+
+# Dependencies and build output
+node_modules/
+functions/node_modules/
+.firebase/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
