@@ -17,6 +17,7 @@ const SAMPLE = {
     fireDetection: 'Detectors isolated with approval (restore at close-out)',
     area: 'Hazardous area (flammable gas, vapour or dust may be present)',
   },
+  energy_isolation: { liveWork: 'No' },
 };
 
 // A permit of the given type with every required answer filled in, built from
@@ -362,4 +363,30 @@ test('energy isolation: electrical and process isolations add their own checks',
   const perrs = PT.validate(proc, {});
   assert.ok(has(perrs, /Process lines/));
   assert.ok(!has(perrs, /Voltage tester/));
+});
+
+test('energy isolation: no live work, electrical details when electrical, gas test in hazardous areas', () => {
+  assert.ok(has(PT.validate(complete('energy_isolation', {}, { liveWork: 'Yes' }), {}), /does not cover live work/));
+  const elec = complete('energy_isolation', {}, { electrician: '', voltage: '', tester: '' });
+  const errs = PT.validate(elec, {});
+  assert.ok(has(errs, /authorised electrical person/) && has(errs, /system voltage/) && has(errs, /voltage tester ID/));
+  const mech = complete('energy_isolation', { isolations: [{ point: 'Conveyor C-2 drive', energy: 'Mechanical', method: 'Coupling pinned', lockNo: 'L-9', isolatedBy: 'M. Fitter', verified: true }] },
+    { electrician: '', voltage: '', tester: '' });
+  mech.checks.testerChecked = false; mech.checks.electricalPpe = false;
+  assert.deepEqual(PT.validate(mech, {}), [], 'mechanical isolation needs no electrical details');
+  assert.ok(has(PT.validate(complete('energy_isolation', { gasTests: [] }, { hazardousArea: 'Yes' }), {}), /gas test before enclosures/));
+  assert.deepEqual(PT.validate(complete('energy_isolation', { gasTests: [] }, { hazardousArea: 'No' }), {}), []);
+});
+
+test('general work: pressure tests, safety-critical equipment and optional toxic gas readings', () => {
+  assert.ok(has(PT.validate(complete('general', {}, { category: 'Pressure or leak testing', pressureTest: '' }), {}), /pressure test details/));
+  const t = PT.byKey('general');
+  const c = closeoutFor(t); c.checks.safetyEquipmentBack = false;
+  assert.ok(has(PT.validateCloseout(complete('general', {}, { safetyEquipmentOut: 'Fire alarm zone 4 isolated' }), c), /back in service/));
+  assert.deepEqual(PT.validateCloseout(complete('general', {}, { safetyEquipmentOut: '', category: 'Inspection or testing' }), c), []);
+  const noToxic = goodGas(t); delete noToxic.h2s; delete noToxic.co;
+  assert.deepEqual(PT.validate(complete('general', { gasTests: [noToxic] }), {}), [], 'H₂S and CO only where tested');
+  const highCo = goodGas(t); highCo.co = 40;
+  assert.ok(has(PT.validate(complete('general', { gasTests: [highCo] }), {}), /CO 40 ppm/));
+  assert.deepEqual(PT.validate(complete('general', { gasTests: [] }, { gasTestNeeded: 'No' }), {}), []);
 });
