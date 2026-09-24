@@ -9,6 +9,7 @@
 <script src="js/subscription-config.js"></script>
 <script src="js/entitlements.js"></script>
 <script src="js/access.js"></script>
+<script src="js/billing.js"></script>
 <script>requireAccess();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -82,8 +83,11 @@ function renderSubscriptionPanel() {
     const st = access.state;
     const email = user.email || '';
     const fmtD = (ms) => ms ? new Date(Number(ms)).toLocaleDateString() : '—';
-    const planName = (doc && doc.subscriptionId === 'pro_yearly') ? 'Yearly'
-      : (doc && doc.subscriptionId === 'pro_monthly') ? 'Monthly' : '';
+    const planId = (doc && doc.subscriptionId) || '';
+    const planName = /yearly$/.test(planId) ? 'Yearly' : /monthly$/.test(planId) ? 'Monthly' : '';
+    // Where the paid plan is managed: Stripe's billing portal for card
+    // subscriptions, Google Play for Play ones (older Play docs have no provider).
+    const provider = (doc && doc.subscriptionProvider) || (/^pro_/.test(planId) ? 'play' : '');
     let title = '', detail = '', actions = '';
     if (st === 'admin') {
       title = 'Administrator account';
@@ -94,12 +98,22 @@ function renderSubscriptionPanel() {
       title = 'Free trial';
       detail = `Started ${fmtD(doc && doc.trialStartedAt)} · Expires ${fmtD(access.until)} — ${left} day${left === 1 ? '' : 's'} left.`;
       actions = '<a class="btn btn-sm btn-primary" href="subscribe.html">Subscribe</a>';
-    } else if (st === 'active' || st === 'granted') {
+    } else if (st === 'granted') {
+      title = 'Access granted';
+      detail = access.until ? `Your access runs until ${fmtD(access.until)}.` : 'Your access was granted by the administrator.';
+    } else if (st === 'active') {
       title = planName ? (planName + ' subscription') : 'Subscription active';
       const exp = access.until || (doc && doc.subscriptionExpiryMillis);
       const since = doc && doc.subscriptionUpdatedAt && doc.subscriptionUpdatedAt.toMillis ? doc.subscriptionUpdatedAt.toMillis() : null;
-      detail = (since ? `Since ${fmtD(since)} · ` : '') + (exp ? `Renews / expires ${fmtD(exp)}.` : 'Active — managed in Google Play.');
-      actions = '<a class="btn btn-sm" href="subscribe.html">Manage plan</a>';
+      if (doc && doc.subscriptionStatus === 'in_grace') {
+        detail = 'Your last payment did not go through. Update your payment method to keep access.';
+      } else if (doc && doc.cancelAtPeriodEnd) {
+        detail = `Cancelled. Your access continues until ${fmtD(exp)}.`;
+      } else {
+        detail = (since ? `Since ${fmtD(since)} · ` : '') + (exp ? `Renews / expires ${fmtD(exp)}.` : 'Active.');
+      }
+      if (provider === 'stripe') actions = '<button type="button" class="btn btn-sm" id="managePlanBtn">Manage plan</button>';
+      else if (provider === 'play') actions = '<a class="btn btn-sm" href="https://play.google.com/store/account/subscriptions" target="_blank" rel="noopener">Manage in Google Play</a>';
     } else if (st === 'locked' || st === 'expired') {
       title = 'Subscription needed';
       detail = `Your ${planName ? planName.toLowerCase() + ' subscription' : 'free trial'} has ended${access.until ? ' on ' + fmtD(access.until) : ''}. Subscribe to continue.`;
@@ -125,6 +139,17 @@ function renderSubscriptionPanel() {
       </div>
       <div class="sub-panel-actions">${actions}</div>
     </div>`;
+    const manage = document.getElementById('managePlanBtn');
+    if (manage) manage.addEventListener('click', async () => {
+      manage.disabled = true;
+      manage.textContent = 'Opening…';
+      try { await WebBilling.portal(); }
+      catch (err) {
+        manage.disabled = false;
+        manage.textContent = 'Manage plan';
+        host.querySelector('.sub-panel-detail').textContent = (err && err.message) || 'Could not open the billing page. Please try again.';
+      }
+    });
   });
 }
 renderSubscriptionPanel();

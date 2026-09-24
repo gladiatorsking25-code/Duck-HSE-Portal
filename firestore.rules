@@ -47,7 +47,9 @@ service cloud.firestore {
     // Paid + admin state — never client-writable.
     function protectedKeys() {
       return ['role', 'subscriptionId', 'subscriptionExpiryMillis',
-              'subscriptionUpdatedAt', 'adminGrantUntil', 'compForever'];
+              'subscriptionUpdatedAt', 'adminGrantUntil', 'compForever',
+              'subscriptionProvider', 'stripeCustomerId', 'stripeSubscriptionId',
+              'cancelAtPeriodEnd'];
     }
     // The only fields a client may set for a one-time free trial.
     function trialKeys() {
@@ -55,9 +57,7 @@ service cloud.firestore {
     }
     // Every entitlement field (paid + admin + trial), for the "plain profile" test.
     function allEntitlementKeys() {
-      return ['role', 'subscriptionId', 'subscriptionExpiryMillis',
-              'subscriptionUpdatedAt', 'adminGrantUntil', 'compForever',
-              'subscriptionStatus', 'trialStartedAt', 'trialEndsAt'];
+      return protectedKeys().concat(trialKeys());
     }
 
     function changed() {

@@ -97,3 +97,56 @@ const Billing = (function () {
 
   return { available, getProducts, subscribe, restore };
 })();
+
+// WebBilling — card subscriptions on the website through Stripe Checkout.
+//
+// The browser only asks the server for a Stripe-hosted page and goes there;
+// card details never touch this site. The subscription is written to the
+// account by the stripeWebhook Cloud Function after Stripe confirms payment
+// (functions/stripe.js), never by this code.
+const WebBilling = (function () {
+  'use strict';
+
+  // Offered on the web only (see subscribe.html): inside the Android app
+  // Google Play's policy requires Play Billing, which Billing handles.
+  function plans() {
+    const web = (typeof SUBSCRIPTION_CONFIG !== 'undefined' && SUBSCRIPTION_CONFIG.WEB_PAYMENTS) || {};
+    return (web.PLANS || []).slice();
+  }
+
+  async function call(name, data) {
+    await firebaseReadyPromise;
+    try {
+      const res = await firebase.functions().httpsCallable(name)(data || {});
+      return res.data || {};
+    } catch (e) {
+      const err = new Error((e && e.message) || 'The payment service could not be reached.');
+      err.code = (e && e.code) || 'error';
+      throw err;
+    }
+  }
+
+  // Only ever leave the site for an https page the server handed back.
+  function go(url) {
+    let u;
+    try { u = new URL(url); } catch (e) { u = null; }
+    if (!u || u.protocol !== 'https:') throw new Error('The payment service returned an invalid link.');
+    location.assign(u.href);
+  }
+
+  // Start Checkout for a plan id from WEB_PAYMENTS.PLANS. Someone who already
+  // has a live card subscription is sent to the billing portal instead.
+  async function checkout(plan) {
+    const data = await call('stripeCreateCheckout', { plan });
+    if (data.alreadySubscribed) return portal();
+    go(data.url);
+  }
+
+  // Stripe's billing portal: change card, switch plan, cancel, download invoices.
+  async function portal() {
+    const data = await call('stripePortal');
+    go(data.url);
+  }
+
+  return { plans, checkout, portal };
+})();

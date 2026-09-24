@@ -74,12 +74,21 @@ async function applyPurchaseToUser(uid, packageName, subscriptionId, purchaseTok
   const active = expiry && expiry > Date.now();
   const status = active ? (sub.paymentState === 0 ? 'in_grace' : 'active') : 'expired';
 
-  await db.collection('users').doc(uid).set({
-    subscriptionStatus: status,
-    subscriptionId,
-    subscriptionExpiryMillis: expiry,
-    subscriptionUpdatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  // A lapsed Play purchase must not end a card subscription that is still live.
+  const userRef = db.collection('users').doc(uid);
+  const current = (await userRef.get()).data() || {};
+  const stripeLive = current.subscriptionProvider === 'stripe'
+    && ['active', 'in_grace'].includes(current.subscriptionStatus)
+    && Number(current.subscriptionExpiryMillis || 0) > Date.now();
+  if (active || !stripeLive) {
+    await userRef.set({
+      subscriptionProvider: 'play',
+      subscriptionStatus: status,
+      subscriptionId,
+      subscriptionExpiryMillis: expiry,
+      subscriptionUpdatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
 
   // Remember which user owns this token so RTDN events can find them later.
   await db.collection('purchaseTokens').doc(purchaseToken).set({
@@ -152,6 +161,10 @@ exports.adminSetSubscription = functions.https.onCall(async (data, context) => {
   }
   const ref = db.collection('users').doc(targetUid);
   const patch = { subscriptionUpdatedAt: FieldValue.serverTimestamp() };
+  // A grant or trial extension must not hide a live paid subscription's
+  // status (it would read as unpaid once the grant ends).
+  const cur = (await ref.get()).data() || {};
+  const paying = ['active', 'in_grace'].includes(cur.subscriptionStatus) && Number(cur.subscriptionExpiryMillis || 0) > Date.now();
 
   if (action === 'grant') {
     if (untilMillis === 'forever') { patch.compForever = true; patch.adminGrantUntil = FieldValue.delete(); }
@@ -160,7 +173,7 @@ exports.adminSetSubscription = functions.https.onCall(async (data, context) => {
       if (!until || until <= Date.now()) throw new functions.https.HttpsError('invalid-argument', 'untilMillis must be a future timestamp or "forever".');
       patch.adminGrantUntil = until; patch.compForever = false;
     }
-    patch.subscriptionStatus = 'comped';
+    if (!paying) patch.subscriptionStatus = 'comped';
   } else if (action === 'revoke') {
     patch.adminGrantUntil = FieldValue.delete();
     patch.compForever = false;
@@ -170,7 +183,8 @@ exports.adminSetSubscription = functions.https.onCall(async (data, context) => {
   } else if (action === 'extendTrial') {
     const until = Number(untilMillis);
     if (!until || until <= Date.now()) throw new functions.https.HttpsError('invalid-argument', 'untilMillis must be a future timestamp.');
-    patch.trialEndsAt = until; patch.subscriptionStatus = 'trial';
+    patch.trialEndsAt = until;
+    if (!paying) patch.subscriptionStatus = 'trial';
   } else {
     throw new functions.https.HttpsError('invalid-argument', 'Unknown action: ' + action);
   }
@@ -222,6 +236,8 @@ exports.adminListUsers = functions.https.onCall(async (data, context) => {
       subscriptionExpiryMillis: u.subscriptionExpiryMillis || null,
       adminGrantUntil: u.adminGrantUntil || null,
       compForever: !!u.compForever,
+      subscriptionProvider: u.subscriptionProvider || null,
+      cancelAtPeriodEnd: !!u.cancelAtPeriodEnd,
       createdAt: u.createdAt && u.createdAt.toMillis ? u.createdAt.toMillis() : null
     };
   });
@@ -371,4 +387,82 @@ exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
     if (inviteSnap.exists) await inviteRef.delete();
     return { joined, needsVerification: false };
   } catch (err) { throw asHttpsError(err); }
+});
+
+// -------------------------------------------------------------------------
+// Stripe — card subscriptions on the website (see stripe.js).
+// Secrets: firebase functions:secrets:set STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET
+// Settings: functions/.env (APP_ORIGIN, STRIPE_PRICE_MONTHLY, …) — see .env.example
+// -------------------------------------------------------------------------
+const billing = require('./stripe');
+const STRIPE_SECRETS = { secrets: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'] };
+let stripeClient = null;
+function stripe() {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    throw new functions.https.HttpsError('failed-precondition', 'Card payments are not set up yet.');
+  }
+  if (!stripeClient) stripeClient = require('stripe')(process.env.STRIPE_SECRET_KEY, stripeTestHost());
+  return stripeClient;
+}
+// Local testing only: STRIPE_API_BASE points the emulator at a fake Stripe API
+// (test/e2e-payments.mjs, or stripe-mock). Ignored when deployed.
+function stripeTestHost() {
+  const base = process.env.FUNCTIONS_EMULATOR === 'true' && process.env.STRIPE_API_BASE;
+  if (!base) return {};
+  const u = new URL(base);
+  return { host: u.hostname, port: u.port, protocol: u.protocol.replace(':', '') };
+}
+function billingError(err) {
+  if (err instanceof billing.BillingError) return new functions.https.HttpsError(err.code, err.message);
+  if (err instanceof functions.https.HttpsError) return err;
+  console.error('Stripe call failed', err);
+  return new functions.https.HttpsError('internal', 'The payment service could not be reached. Please try again.');
+}
+
+exports.stripeCreateCheckout = functions.runWith(STRIPE_SECRETS).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign in first.');
+  try {
+    return await billing.createCheckout({
+      stripe: stripe(), db, uid: context.auth.uid, email: context.auth.token.email,
+      plan: String((data && data.plan) || ''), env: process.env,
+      serverTimestamp: () => FieldValue.serverTimestamp()
+    });
+  } catch (err) { throw billingError(err); }
+});
+
+exports.stripePortal = functions.runWith(STRIPE_SECRETS).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign in first.');
+  try {
+    return await billing.createPortal({ stripe: stripe(), db, uid: context.auth.uid, env: process.env });
+  } catch (err) { throw billingError(err); }
+});
+
+// Stripe → us. Point a Stripe webhook endpoint at this function's URL with the
+// events listed in docs/PAYMENTS.md. The signature check is what makes it safe
+// to be public.
+exports.stripeWebhook = functions.runWith(STRIPE_SECRETS).https.onRequest(async (req, res) => {
+  if (req.method !== 'POST') { res.status(405).send('Method not allowed'); return; }
+  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
+    console.error('Stripe webhook called but STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET are not set');
+    res.status(500).send('Not configured');   // Stripe keeps retrying until it is
+    return;
+  }
+  let event;
+  try {
+    event = stripe().webhooks.constructEvent(req.rawBody, req.get('stripe-signature'), process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.warn('Stripe webhook rejected:', err.message);
+    res.status(400).send('Invalid signature');
+    return;
+  }
+  try {
+    const outcome = await billing.handleEvent({
+      stripe: stripe(), db, event, env: process.env, serverTimestamp: () => FieldValue.serverTimestamp()
+    });
+    console.log('Stripe event', event.id, event.type, outcome);
+    res.json({ received: true });
+  } catch (err) {
+    console.error('Stripe webhook failed', event.id, err);
+    res.status(500).send('Retry later');   // Stripe retries with backoff
+  }
 });

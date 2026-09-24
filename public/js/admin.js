@@ -88,7 +88,7 @@
             return `<tr>
               <td>${esc(u.email || '—')}<div class="hint num">${esc(u.uid.slice(0, 10))}…</div></td>
               <td>${badge(a)}</td>
-              <td>${esc(u.subscriptionStatus || '—')}</td>
+              <td>${esc(u.subscriptionStatus || '—')}${u.subscriptionProvider ? `<div class="hint">${esc(u.subscriptionProvider)}${u.cancelAtPeriodEnd ? ' · cancelling' : ''}</div>` : ''}</td>
               <td class="num">${fmt(u.trialEndsAt)}</td>
               <td class="num">${fmt(u.subscriptionExpiryMillis)}</td>
               <td class="num">${esc(grant)}</td>
