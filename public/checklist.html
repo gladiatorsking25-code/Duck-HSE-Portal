@@ -110,6 +110,10 @@
             <input type="text" id="project" autocomplete="off">
           </div>
           <div class="field">
+            <label for="projectId">Track on project</label>
+            <select id="projectId"></select>
+          </div>
+          <div class="field">
             <label for="contractor" data-i18n="f.contractor"></label>
             <input type="text" id="contractor" autocomplete="off">
           </div>
@@ -333,6 +337,8 @@
 renderSidebar('checklist');
 renderFooter('app-footer');
 </script>
+<script src="js/projects.js"></script>
+<script src="js/project-link.js"></script>
 <script src="js/checklist.js"></script>
 <script src="js/pwa.js"></script>
 </body>

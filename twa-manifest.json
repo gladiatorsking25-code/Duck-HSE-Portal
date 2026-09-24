@@ -24,8 +24,8 @@
   "iconUrl": "https://HOST_DOMAIN/assets/icons/icon-512.png",
   "maskableIconUrl": "https://HOST_DOMAIN/assets/icons/icon-maskable-512.png",
   "splashScreenFadeOutDuration": 300,
-  "appVersionName": "1.7.1",
-  "appVersionCode": 14,
+  "appVersionName": "1.8.0",
+  "appVersionCode": 15,
   "shortcuts": [
     {
       "name": "New assessment",
@@ -58,7 +58,7 @@
   "isMetaQuest": false,
   "fullScopeUrl": "https://HOST_DOMAIN/",
   "minSdkVersion": 21,
-  "appVersion": "1.7.1",
+  "appVersion": "1.8.0",
   "signingKey": {
     "path": "./android.keystore",
     "alias": "android"

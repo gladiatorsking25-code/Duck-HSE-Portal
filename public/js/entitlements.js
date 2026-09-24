@@ -44,6 +44,9 @@ const Entitlements = (function () {
     // 1. Owner / admin — always full access, never gated.
     if (u.role === 'admin') return mk('admin', true, null);
 
+    // 1b. Revoked by an admin — locked, whatever else the doc says.
+    if (u.subscriptionStatus === 'revoked') return mk('locked', false, null);
+
     // 2. Manual admin grant / comp (an owner gave this account access until a date).
     const grant = num(u.adminGrantUntil);
     if (grant && grant > now) return mk('granted', true, grant);

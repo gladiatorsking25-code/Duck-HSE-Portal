@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/consent.js"></script>
+<script>requireConsent();</script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/projects.css">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2 id="pageTitle">Project</h2>
+        <div class="crumb"><a href="projects.html">Projects</a> / <span id="crumbName">…</span></div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn" type="button" id="exportBtn" disabled>Export CSV</button>
+        <button class="btn btn-primary" type="button" id="addItemBtn" hidden>+ Add item</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <div id="notice"></div>
+      <div id="projectBody" hidden>
+        <div class="card project-head" id="projectHead"></div>
+
+        <div class="grid grid-4" id="statCards" style="margin-top:16px;"></div>
+
+        <div class="split" style="margin-top:22px;">
+          <section aria-labelledby="itemsHeading">
+            <div class="section-title" id="itemsHeading" style="margin-top:0;">Tracked items</div>
+            <div class="toolbar">
+              <input type="search" id="itemSearch" placeholder="Search items…" aria-label="Search items">
+              <select id="itemStatus" aria-label="Filter by status">
+                <option value="notclosed">Open &amp; in progress</option>
+                <option value="">All statuses</option>
+                <option value="open">Open</option>
+                <option value="in_progress">In progress</option>
+                <option value="closed">Closed</option>
+                <option value="overdue">Overdue</option>
+              </select>
+              <select id="itemType" aria-label="Filter by type"><option value="">All types</option></select>
+              <label style="font-size:13px; display:flex; gap:6px; align-items:center;"><input type="checkbox" id="onlyMine"> Assigned to me</label>
+            </div>
+            <div id="itemsTable"></div>
+          </section>
+
+          <aside>
+            <div class="card" aria-labelledby="teamHeading">
+              <div class="section-title" id="teamHeading" style="margin-top:0;">Team</div>
+              <ul class="member-list" id="memberList"></ul>
+              <div id="pendingList"></div>
+              <form id="inviteForm" hidden style="margin-top:14px;">
+                <div class="field"><label for="inviteEmail">Invite by email</label>
+                  <input type="email" id="inviteEmail" required maxlength="254" autocomplete="off" placeholder="name@company.com"></div>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                  <select id="inviteRole" aria-label="Role for the invited person" style="flex:1;">
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                    <option value="manager">Manager</option>
+                  </select>
+                  <button class="btn btn-primary" type="submit" id="inviteBtn">Invite</button>
+                </div>
+                <p class="hint" style="font-size:12px; color:var(--ink-soft); margin:8px 0 0;">Editors add and update items. Viewers can only read. Managers can also manage the team. Each person needs their own Duck HSE Portal account to edit. They join once their email address is verified.</p>
+              </form>
+              <div id="teamMsg"></div>
+              <button class="btn btn-sm" type="button" id="leaveBtn" hidden style="margin-top:12px;">Leave project</button>
+            </div>
+
+            <div class="card" style="margin-top:16px;" aria-labelledby="activityHeading">
+              <div class="section-title" id="activityHeading" style="margin-top:0;">Recent activity</div>
+              <ul class="activity-feed" id="activityFeed"><li>Loading…</li></ul>
+            </div>
+          </aside>
+        </div>
+      </div>
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Item modal -->
+<div class="modal-backdrop" id="itemModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="itemModalTitle">
+    <div class="modal-head"><h3 id="itemModalTitle" style="margin:0;">Add item</h3><button class="close-x" type="button" data-close aria-label="Close">×</button></div>
+    <form class="modal-body" id="itemForm">
+      <fieldset id="itemFields" style="border:0; padding:0; margin:0;">
+      <div class="form-grid">
+        <div class="field full"><label for="iTitle">Title *</label><input type="text" id="iTitle" maxlength="200" required></div>
+        <div class="field"><label for="iType">Type</label><select id="iType"></select></div>
+        <div class="field"><label for="iStatus">Status</label>
+          <select id="iStatus"><option value="open">Open</option><option value="in_progress">In progress</option><option value="closed">Closed</option></select></div>
+        <div class="field"><label for="iPriority">Priority</label>
+          <select id="iPriority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="critical">Critical</option></select></div>
+        <div class="field"><label for="iDue">Due date</label><input type="date" id="iDue"></div>
+        <div class="field"><label for="iAssignee">Assigned to</label><select id="iAssignee"></select></div>
+        <div class="field"><label for="iLocation">Location / area</label><input type="text" id="iLocation" maxlength="160"></div>
+        <div class="field full"><label for="iDetails">Details</label><textarea id="iDetails" rows="4" maxlength="5000"></textarea></div>
+      </div>
+      </fieldset>
+      <div id="itemRef" class="item-sub" style="margin-top:10px;"></div>
+      <div id="itemMeta" class="item-sub" style="margin-top:6px;"></div>
+      <div id="itemFormError"></div>
+    </form>
+    <div class="modal-foot">
+      <button class="btn btn-danger" type="button" id="itemDeleteBtn" hidden style="margin-right:auto;">Delete</button>
+      <button class="btn" type="button" data-close>Close</button>
+      <button class="btn btn-primary" type="submit" form="itemForm" id="itemSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Project details modal -->
+<div class="modal-backdrop" id="projectModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
+    <div class="modal-head"><h3 id="projectModalTitle" style="margin:0;">Project details</h3><button class="close-x" type="button" data-close aria-label="Close">×</button></div>
+    <form class="modal-body" id="projectForm">
+      <div class="form-grid">
+        <div class="field full"><label for="pName">Project name *</label><input type="text" id="pName" maxlength="120" required></div>
+        <div class="field"><label for="pNumber">Project number</label><input type="text" id="pNumber" maxlength="60"></div>
+        <div class="field"><label for="pStatus">Status</label>
+          <select id="pStatus"><option value="planning">Planning</option><option value="active">Active</option><option value="on_hold">On hold</option><option value="closed">Closed</option><option value="archived">Archived (hidden from the list)</option></select></div>
+        <div class="field"><label for="pClient">Client</label><input type="text" id="pClient" maxlength="120"></div>
+        <div class="field"><label for="pLocation">Location / site</label><input type="text" id="pLocation" maxlength="160"></div>
+        <div class="field"><label for="pStart">Start date</label><input type="date" id="pStart"></div>
+        <div class="field"><label for="pEnd">End date</label><input type="date" id="pEnd"></div>
+        <div class="field full"><label for="pDrive">Google Drive folder link</label>
+          <input type="url" id="pDrive" maxlength="500" placeholder="https://drive.google.com/drive/folders/…">
+          <span class="hint">Where this project's documents, photos and certificates are kept.</span></div>
+        <div class="field full"><label for="pDesc">Scope / notes</label><textarea id="pDesc" rows="3" maxlength="4000"></textarea></div>
+      </div>
+      <div id="projectFormError"></div>
+    </form>
+    <div class="modal-foot">
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit" form="projectForm" id="projectSaveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/storage.js"></script>
+<script src="js/cloud-sync.js"></script>
+<script src="js/nav.js"></script>
+<script src="js/projects.js"></script>
+<script src="js/project-page.js"></script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

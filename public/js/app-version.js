@@ -7,9 +7,9 @@
 // APP_VERSION_CODE is the integer Google Play uses to order releases. It must
 // increase with every upload to Play, and it can never be reused or lowered.
 
-const APP_VERSION = '1.7.1';
-const APP_VERSION_CODE = 14;
-const APP_RELEASE_DATE = '2026-09-21';
+const APP_VERSION = '1.8.0';
+const APP_VERSION_CODE = 15;
+const APP_RELEASE_DATE = '2026-09-24';
 
 // Shown in the Terms/Privacy pages and on the About page so a user can tell
 // support exactly which build they are on.

@@ -21,7 +21,27 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin';
+    }
+
+    // Server-enforced paywall. Mirrors computeAccess() in js/entitlements.js:
+    // admin → manual grant → paid subscription → running trial. A revoked
+    // account is locked whatever its other fields say. Used to gate WRITES to
+    // shared project data; a lapsed member can still read and export.
+    function hasAccess() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      let now = request.time.toMillis();
+      let u = exists(path) ? get(path).data : {};
+      let status = u.get('subscriptionStatus', '');
+      return isSignedIn() && (
+           u.get('role', '') == 'admin'
+        || ( status != 'revoked' && (
+                u.get('compForever', false) == true
+             || u.get('adminGrantUntil', 0) > now
+             || ( status in ['active', 'in_grace'] && u.get('subscriptionExpiryMillis', 0) > now )
+             || u.get('trialEndsAt', 0) > now
+           ))
+      );
     }
 
     // Paid + admin state — never client-writable.
@@ -77,6 +97,126 @@ service cloud.firestore {
       match /assessments/{docId} { allow read, write: if isOwner(uid); }
       match /permits/{docId}     { allow read, write: if isOwner(uid); }
       match /checklists/{docId}  { allow read, write: if isOwner(uid); }
+    }
+
+    // ---- Projects (shared between team members) ---------------------------
+    // Membership (members / memberUids / memberEmails / pendingInvites /
+    // ownerUid) is changed ONLY by the projectSetMember / projectRemoveMember
+    // Cloud Functions, which look people up by email. Clients may create a
+    // project with themselves as sole owner, and edit its details.
+    //
+    // Roles: owner > manager > editor > viewer.
+    function projectDoc(pid) {
+      return get(/databases/$(database)/documents/projects/$(pid)).data;
+    }
+    function roleOf(p) { return p.members.get(request.auth.uid, ''); }
+    function isMemberOf(p) { return isSignedIn() && roleOf(p) != ''; }
+    function canEditIn(p) { return isSignedIn() && roleOf(p) in ['owner', 'manager', 'editor']; }
+    function canManage(p) { return isSignedIn() && roleOf(p) in ['owner', 'manager']; }
+
+    function membershipKeys() {
+      return ['ownerUid', 'members', 'memberUids', 'memberEmails', 'pendingInvites'];
+    }
+    function projectKeys() {
+      return ['name', 'number', 'client', 'location', 'status', 'startDate',
+              'endDate', 'description', 'driveFolderUrl',
+              'ownerUid', 'members', 'memberUids', 'memberEmails', 'pendingInvites',
+              'createdAt', 'createdBy', 'updatedAt', 'updatedBy'];
+    }
+    function isDate(v) { return v is string && (v == '' || v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')); }
+    function shortText(v, max) { return v is string && v.size() <= max; }
+    function validProjectFields(d) {
+      return d.keys().hasOnly(projectKeys())
+        && d.name is string && d.name.size() >= 1 && d.name.size() <= 120
+        && shortText(d.get('number', ''), 60)
+        && shortText(d.get('client', ''), 120)
+        && shortText(d.get('location', ''), 160)
+        && shortText(d.get('description', ''), 4000)
+        && d.status in ['planning', 'active', 'on_hold', 'closed', 'archived']
+        && isDate(d.get('startDate', ''))
+        && isDate(d.get('endDate', ''))
+        && ( d.get('driveFolderUrl', '') == ''
+             || ( shortText(d.driveFolderUrl, 500)
+                  && d.driveFolderUrl.matches('^https://drive[.]google[.]com/.*') ) )
+        && d.updatedAt == request.time
+        && d.updatedBy == request.auth.uid;
+    }
+
+    match /projects/{pid} {
+      allow get:  if isMemberOf(resource.data) || isAdmin();
+      // Queries must be `where('memberUids', 'array-contains', uid)`.
+      allow list: if isSignedIn() && request.auth.uid in resource.data.memberUids;
+
+      allow create: if isSignedIn() && hasAccess()
+        && validProjectFields(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members.keys().hasOnly([request.auth.uid])
+        && request.resource.data.members[request.auth.uid] == 'owner'
+        && request.resource.data.memberUids == [request.auth.uid]
+        && request.resource.data.memberEmails is map
+        && request.resource.data.memberEmails.keys().hasOnly([request.auth.uid])
+        && request.resource.data.pendingInvites == []
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if canManage(resource.data) && hasAccess()
+        && validProjectFields(request.resource.data)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+              .hasAny(membershipKeys().concat(['createdAt', 'createdBy']));
+
+      // Projects are archived (status 'archived'), never hard-deleted from a
+      // client, so a mis-click can't wipe a team's records.
+      allow delete: if false;
+
+      // ---- Tracked items: the project's register of work -----------------
+      function validItem(d) {
+        return d.keys().hasOnly(['type', 'title', 'status', 'priority', 'dueDate',
+                                 'assigneeUid', 'location', 'details', 'ref',
+                                 'createdAt', 'createdBy', 'updatedAt', 'updatedBy',
+                                 'closedAt'])
+          && d.type in ['assessment', 'permit', 'checklist', 'audit', 'inspection',
+                        'observation', 'incident', 'action', 'document', 'meeting', 'other']
+          && d.title is string && d.title.size() >= 1 && d.title.size() <= 200
+          && d.status in ['open', 'in_progress', 'closed']
+          && d.priority in ['low', 'medium', 'high', 'critical']
+          && isDate(d.get('dueDate', ''))
+          && d.get('assigneeUid', '') is string
+          && shortText(d.get('location', ''), 160)
+          && shortText(d.get('details', ''), 5000)
+          && ( !('ref' in d) || ( d.ref is map
+                && d.ref.keys().hasOnly(['kind', 'id', 'label'])
+                && d.ref.kind in ['assessment', 'permit', 'checklist', 'audit']
+                && shortText(d.ref.id, 80) && shortText(d.ref.label, 200) ) )
+          && d.updatedAt == request.time
+          && d.updatedBy == request.auth.uid;
+      }
+      match /items/{itemId} {
+        allow read: if isMemberOf(projectDoc(pid));
+        allow create: if canEditIn(projectDoc(pid)) && hasAccess()
+          && validItem(request.resource.data)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time;
+        allow update: if canEditIn(projectDoc(pid)) && hasAccess()
+          && validItem(request.resource.data)
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if canManage(projectDoc(pid)) && hasAccess();
+      }
+
+      // ---- Activity log: append-only, stamped by the server clock --------
+      match /activity/{eventId} {
+        allow read: if isMemberOf(projectDoc(pid));
+        allow create: if canEditIn(projectDoc(pid)) && hasAccess()
+          && request.resource.data.keys().hasOnly(['at', 'uid', 'email', 'action', 'itemId', 'summary'])
+          && request.resource.data.at == request.time
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.action in ['project.create', 'project.update',
+               'item.create', 'item.update', 'item.close', 'item.reopen', 'item.delete']
+          && shortText(request.resource.data.get('email', ''), 254)
+          && shortText(request.resource.data.get('itemId', ''), 80)
+          && shortText(request.resource.data.get('summary', ''), 300);
+        allow update, delete: if false;
+      }
     }
 
     // Written only by Cloud Functions (Admin SDK); no client access.

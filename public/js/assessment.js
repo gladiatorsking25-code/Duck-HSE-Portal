@@ -565,15 +565,32 @@ document.getElementById('btnSave').addEventListener('click', async () => {
     exclusionZoneM: planParams.exclusionZoneM,
     exclusionZoneNote: planParams.exclusionZoneNote,
     briefingPoints,
-    trainingRequirements: training
+    trainingRequirements: training,
+    projectId: document.getElementById('projectLink').value || null
   }, r.record.jibMode
     ? { jibMode: true, boomLength: r.spec.maxBoomLength, jibLength: r.record.jibLength, jibOffset: r.record.jibOffset, boomAngle: r.record.boomAngle, workingRadius: null }
     : { jibMode: false, boomLength: r.record.boomLength, workingRadius: r.record.workingRadius });
 
   DB.saveAssessment(record);
+  let linked = '';
+  if (record.projectId && typeof ProjectLink !== 'undefined') {
+    confirmEl.textContent = 'Saved. Adding it to the project…';
+    const res = await ProjectLink.sync(record.projectId,
+      { kind: 'assessment', id: record.id, label: `${record.craneModel} · ${record.loadWeight} t` },
+      {
+        title: `Lift assessment: ${record.craneModel}, ${record.loadWeight} t at ${Math.round(record.utilization)}% of capacity`,
+        status: record.isValid ? 'closed' : 'open',
+        priority: record.isValid ? (record.utilization >= 90 ? 'high' : 'medium') : 'critical',
+        details: [record.isValid ? 'Within capacity.' : 'NOT within capacity: the lift must not proceed as planned.',
+                  `Assessed by ${assessorName}.`, notes].filter(Boolean).join(' ')
+      });
+    linked = res.ok ? ' and added to the project' : ` (could not add it to the project: ${res.error})`;
+  }
   btnSave.disabled = false;
-  confirmEl.textContent = 'Saved to history ✓ (lift diagrams attached)';
+  confirmEl.textContent = `Saved to history ✓ (lift diagrams attached)${linked}`;
 });
+
+if (typeof ProjectLink !== 'undefined') ProjectLink.mount(document.getElementById('projectLink'), null);
 
 populateCraneModels();
 

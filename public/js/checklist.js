@@ -34,7 +34,7 @@
     'equipmentType', 'make', 'model', 'serial', 'assetNo', 'plateNo', 'capacity',
     'hourMeter', 'odometer', 'location', 'project', 'contractor', 'operator',
     'month', 'inspectionDate', 'nextDue', 'inspector', 'inspectorId', 'supervisor',
-    'colourScheme', 'remarks'
+    'colourScheme', 'remarks', 'projectId'
   ];
 
   function readFields() {
@@ -561,12 +561,27 @@
     const persistedCertificates = await persistCertificatePhotos(recordId);
     const rec = DB.saveChecklist(buildRecord(persistedCertificates));
     editingId = rec.id;
+    let linkError = '';
+    if (rec.projectId && typeof ProjectLink !== 'undefined') {
+      const unfit = rec.verdict === 'unfit';
+      const res = await ProjectLink.sync(rec.projectId,
+        { kind: 'checklist', id: rec.id, label: `${rec.equipmentType || 'Equipment'} ${rec.assetNo || ''}`.trim() },
+        {
+          title: `Inspection: ${rec.equipmentType || 'Equipment'} ${rec.assetNo || ''} (${rec.verdict === 'fit' ? 'fit for use' : rec.verdict === 'conditional' ? 'conditional' : 'NOT fit for use'})`,
+          status: rec.verdict === 'fit' ? 'closed' : 'open',
+          priority: unfit ? 'critical' : rec.verdict === 'conditional' ? 'high' : 'low',
+          dueDate: rec.verdict === 'fit' ? '' : (rec.nextDue || ''),
+          location: rec.location || '',
+          details: [`Inspected by ${rec.inspector || '?'} on ${rec.inspectionDate || '?'}.`, rec.remarks || ''].filter(Boolean).join(' ')
+        });
+      if (!res.ok) linkError = ` Could not add it to the project: ${res.error}`;
+    }
     certificates = persistedCertificates;
     certificatePhotos = {};
     persistedCertificates.forEach(c => { certificatePhotos[c.id] = (c.photos || []).map(p => ({ id: p.id, name: p.name })); });
     await renderCertificateSection();
     const el = $('saveConfirm');
-    el.textContent = I18n.t('msg.saved');
+    el.textContent = I18n.t('msg.saved') + linkError;
     el.className = 'banner banner-ok';
     setTimeout(() => { el.textContent = ''; el.className = ''; }, 6000);
   }
@@ -636,6 +651,7 @@
     populateTypes();
     populateSchemes();
     writeFields(rec);
+    if (typeof ProjectLink !== 'undefined') ProjectLink.mount($('projectId'), rec.projectId || null);
     answers = {};
     Object.entries(rec.answers || {}).forEach(([k, v]) => { answers[k] = Object.assign({}, v); });
     certificates = Array.isArray(rec.certificates) ? rec.certificates.map(c => Object.assign({}, c, { photos: Array.isArray(c.photos) ? c.photos.slice() : [] })) : [];
@@ -765,8 +781,9 @@
 
     const params = new URLSearchParams(location.search);
     const id = params.get('id');
-    if (id) loadRecord(id);
-    else { renderSections(); renderCertificateSection(); }
+    if (id && loadRecord(id)) return;
+    if (typeof ProjectLink !== 'undefined') ProjectLink.mount($('projectId'), null);
+    renderSections(); renderCertificateSection();
   }
 
   if (document.readyState === 'loading') {

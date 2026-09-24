@@ -18,6 +18,9 @@ const CloudAuth = {
   async signUp(email, password) {
     const auth = await this._auth();
     const cred = await auth.createUserWithEmailAndPassword(email, password);
+    // A verified address is required before project invites can land on this
+    // account (functions/projects.js), so ask for it straight away.
+    try { await cred.user.sendEmailVerification(); } catch (e) { console.warn('Verification email not sent', e); }
     // NOTE: do NOT write the user's Firestore doc here. The onUserCreate Cloud
     // Function (functions/index.js) creates it with the email, role, and the
     // server-set trial window — and the Firestore rules now forbid a client from
