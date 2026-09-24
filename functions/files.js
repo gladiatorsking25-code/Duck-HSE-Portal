@@ -16,6 +16,14 @@ const crypto = require('crypto');
 // at 10 MB. Base64 adds a third, so 7 MB is the largest file that fits.
 const MAX_FILE_BYTES = 7 * 1024 * 1024;
 const DEFAULT_QUOTA_MB = 2048;
+// Space and file count one account may use across every project it adds files
+// to, so making more projects does not multiply the space.
+const DEFAULT_USER_QUOTA_MB = 10240;
+const MAX_FILES_PER_PROJECT = 5000;
+const MAX_FILES_PER_USER = 20000;
+// Deleted files stay in the shared drive's trash for 30 days and keep using
+// space there, so they keep counting against the limits until then.
+const TRASH_HOLD_MS = 30 * 86400000;
 const MAX_NOTE = 500;
 const MAX_NAME = 150;
 
@@ -68,6 +76,8 @@ function fmtMB(bytes) { return (bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 
 // characters, a sensible length, and the extension kept.
 function cleanName(raw) {
   let name = String(raw == null ? '' : raw).split(/[\\/]/).pop();
+  // Direction controls could make "invoice_\u202Efdp.rtf" read as "invoice_ftr.pdf".
+  name = name.replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '');
   name = name.replace(/[\u0000-\u001f\u007f<>:"|?*]+/g, ' ').replace(/\s+/g, ' ').trim();
   name = name.replace(/^[.\s]+/, '');
   const dot = name.lastIndexOf('.');
@@ -88,7 +98,13 @@ function matchesMagic(type, buf) {
 }
 
 function quotaMessage(used, quotaBytes) {
-  return `This project has used ${fmtMB(used)} of its ${fmtMB(quotaBytes)} of file space. Delete files you no longer need, or ask the portal owner for more space.`;
+  return `This project has used ${fmtMB(used)} of its ${fmtMB(quotaBytes)} of file space. Files deleted in the last 30 days still count while they are in the Drive trash. Ask the portal owner if you need more space.`;
+}
+function projectFilesMessage() {
+  return `This project has reached ${MAX_FILES_PER_PROJECT} files (files deleted in the last 30 days still count). Ask the portal owner if you need more.`;
+}
+function userQuotaMessage(used, quotaBytes) {
+  return `You have added ${fmtMB(used)} of files across your projects, the most one account can add (${fmtMB(quotaBytes)}, or ${MAX_FILES_PER_USER} files, counting files deleted in the last 30 days). Ask the portal owner if you need more.`;
 }
 
 function allowedList() { return Object.keys(FILE_TYPES).join(', '); }
@@ -110,7 +126,7 @@ function planUpload(project, uid, input, buf, usage, quotaBytes) {
   const i = input || {};
   const { name, ext } = cleanName(i.name);
   if (!name || !ext) bad('The file needs a name with an extension, like report.pdf.');
-  const type = FILE_TYPES[ext];
+  const type = Object.prototype.hasOwnProperty.call(FILE_TYPES, ext) ? FILE_TYPES[ext] : null;
   if (!type) bad(`Files of type .${ext} cannot be added. Allowed: ${allowedList()}.`);
   if (!buf || !buf.length) bad('The file is empty.');
   if (buf.length > MAX_FILE_BYTES) bad(`${name} is ${fmtMB(buf.length)}. Files can be at most ${fmtMB(MAX_FILE_BYTES)}.`);
@@ -138,6 +154,10 @@ const BACKUP_FORMAT = 'duck-hse-project-backup';
 const BACKUP_VERSION = 1;
 // How many of each kind of backup a project keeps; the oldest go first.
 const KEEP = { auto: 30, manual: 20, restore_point: 10 };
+// Larger projects are not backed up here: the whole backup is built in memory
+// and must stay small enough to download through a callable.
+const MAX_BACKUP_ITEMS = 3000;
+const MAX_BACKUP_FILES = 5000;
 const ITEM_KEYS = ['type', 'title', 'status', 'priority', 'dueDate', 'assigneeUid', 'location',
   'details', 'ref', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'closedAt'];
 
@@ -179,13 +199,20 @@ function stable(v) { return JSON.stringify(v); } // toJson already sorts keys
  * Everything a project holds, as one JSON document.
  * `activity` is the recent log (newest first) and is kept for reference only.
  */
-function buildBackup({ projectId, project, items, files, activity, now, kind, by }) {
+function backupBody({ project, items, files }) {
   const body = {
     project: toJson(project),
     items: (items || []).map((it) => toJson(it)).sort((a, b) => String(a.id).localeCompare(String(b.id))),
     files: (files || []).map((f) => toJson(f)).sort((a, b) => String(a.id).localeCompare(String(b.id)))
   };
-  const fingerprint = crypto.createHash('sha256').update(stable(body)).digest('hex');
+  return { body, fingerprint: crypto.createHash('sha256').update(stable(body)).digest('hex') };
+}
+// What the nightly backup compares to decide whether anything changed. The
+// activity log is left out: it only grows when something else changes.
+function fingerprintOf(parts) { return backupBody(parts).fingerprint; }
+
+function buildBackup({ projectId, project, items, files, activity, now, kind, by }) {
+  const { body, fingerprint } = backupBody({ project, items, files });
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
@@ -254,7 +281,8 @@ function planRestore(backup, projectId, currentItemIds) {
 }
 
 module.exports = {
-  MAX_FILE_BYTES, DEFAULT_QUOTA_MB, FILE_TYPES, CATEGORIES, KEEP, BACKUP_FORMAT, BACKUP_VERSION,
-  FileError, cleanName, planUpload, quotaMessage, canDeleteFile, matchesMagic, atLeast, roleOf, fmtMB,
-  toJson, fromJson, buildBackup, backupName, backupsToPrune, planRestore
+  MAX_FILE_BYTES, DEFAULT_QUOTA_MB, DEFAULT_USER_QUOTA_MB, MAX_FILES_PER_PROJECT, MAX_FILES_PER_USER, TRASH_HOLD_MS,
+  FILE_TYPES, CATEGORIES, KEEP, MAX_BACKUP_ITEMS, MAX_BACKUP_FILES, BACKUP_FORMAT, BACKUP_VERSION,
+  FileError, cleanName, planUpload, quotaMessage, projectFilesMessage, userQuotaMessage, canDeleteFile, matchesMagic,
+  atLeast, roleOf, fmtMB, toJson, fromJson, fingerprintOf, buildBackup, backupName, backupsToPrune, planRestore
 };

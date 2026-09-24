@@ -200,6 +200,18 @@ test('an item with an unknown type or extra fields is rejected', async () => {
   await assertFails(addDoc(collection(db('editor'), 'projects', 'p1', 'items'), newItem('editor', { isAdmin: true })));
 });
 
+test('an item cannot carry a huge assignee or a closing date that is not a date', async () => {
+  const items = collection(db('editor'), 'projects', 'p1', 'items');
+  await assertFails(addDoc(items, newItem('editor', { assigneeUid: 'x'.repeat(129) })));
+  await assertFails(addDoc(items, newItem('editor', { closedAt: 'yesterday' })));
+  await assertFails(addDoc(items, newItem('editor', { closedAt: { big: 'x'.repeat(5000) } })));
+  await assertSucceeds(addDoc(items, newItem('editor', { closedAt: serverTimestamp(), status: 'closed' })));
+  await assertSucceeds(addDoc(items, newItem('editor', { closedAt: null })));
+  await assertFails(updateDoc(doc(db('editor'), 'projects', 'p1', 'items', 'i1'), {
+    closedAt: 12345, updatedAt: serverTimestamp(), updatedBy: 'editor'
+  }));
+});
+
 test('a lapsed member can read items but not change them', async () => {
   await assertSucceeds(getDoc(doc(db('lapsed'), 'projects', 'p1', 'items', 'i1')));
   await assertFails(updateDoc(doc(db('lapsed'), 'projects', 'p1', 'items', 'i1'), {
@@ -252,7 +264,11 @@ test('only the owner and managers can see backups, and nobody can write them', a
   await assertFails(updateDoc(doc(db('owner'), 'projects', 'p1', 'backups', 'b1'), { driveFileId: 'x' }));
 });
 
-test('Drive folder records are server only', async () => {
+test('Drive folder, space and trash records are server only', async () => {
   await assertFails(getDoc(doc(db('owner'), 'driveFolders', 'p1')));
   await assertFails(setDoc(doc(db('owner'), 'driveFolders', 'p1'), { filesFolderId: 'another-customers-folder' }));
+  await assertFails(getDoc(doc(db('owner'), 'driveUsers', 'owner')));
+  await assertFails(setDoc(doc(db('owner'), 'driveUsers', 'owner'), { usedBytes: 0, fileCount: 0 }));
+  await assertFails(getDoc(doc(db('owner'), 'driveTrash', 't1')));
+  await assertFails(setDoc(doc(db('owner'), 'driveTrash', 't1'), { pid: 'p1', uid: 'owner', size: -1e12, releaseAt: 0 }));
 });

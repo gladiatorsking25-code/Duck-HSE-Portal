@@ -328,7 +328,9 @@
     $(id).addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target === $(id)) $(id).hidden = true; });
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') ['itemModal', 'projectModal'].forEach((id) => { $(id).hidden = true; });
+    // A files window or photo viewer on top closes first (project-files.js).
+    if (e.key !== 'Escape' || (typeof ProjectFiles !== 'undefined' && ProjectFiles.modalOpen())) return;
+    ['itemModal', 'projectModal'].forEach((id) => { $(id).hidden = true; });
   });
 
   // ---- Export ----------------------------------------------------------------------

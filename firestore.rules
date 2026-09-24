@@ -180,7 +180,8 @@ service cloud.firestore {
           && d.status in ['open', 'in_progress', 'closed']
           && d.priority in ['low', 'medium', 'high', 'critical']
           && isDate(d.get('dueDate', ''))
-          && d.get('assigneeUid', '') is string
+          && shortText(d.get('assigneeUid', ''), 128)
+          && ( !('closedAt' in d) || d.closedAt == null || d.closedAt is timestamp )
           && shortText(d.get('location', ''), 160)
           && shortText(d.get('details', ''), 5000)
           && ( !('ref' in d) || ( d.ref is map
@@ -234,8 +235,12 @@ service cloud.firestore {
 
     // Written only by Cloud Functions (Admin SDK); no client access.
     match /purchaseTokens/{token} { allow read, write: if false; }
-    // Each project's Drive folder ids and space used. Server only.
+    // Project files bookkeeping: each project's Drive folder ids and space
+    // used, each account's space used, and deleted files waiting for Drive's
+    // trash to empty. Server only.
     match /driveFolders/{pid}     { allow read, write: if false; }
+    match /driveUsers/{uid}       { allow read, write: if false; }
+    match /driveTrash/{id}        { allow read, write: if false; }
     match /adminLog/{id}          { allow read: if isAdmin(); allow write: if false; }
 
     // Explicit default-deny for everything else.

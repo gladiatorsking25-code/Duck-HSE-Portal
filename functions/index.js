@@ -542,8 +542,9 @@ exports.projectRestoreItems = functions.runWith({ timeoutSeconds: 300, memory: '
   } catch (err) { throw fileError(err); }
 });
 
-// Every night at 02:00 UAE time, back up each project that changed.
-exports.projectBackupsDaily = functions.runWith({ timeoutSeconds: 540, memory: '512MB' })
+// Every night at 02:00 UAE time: give back the space of files deleted 30 days
+// ago, then back up each project that changed.
+exports.projectBackupsDaily = functions.runWith({ timeoutSeconds: 540, memory: '1GB' })
   .pubsub.schedule('every day 02:00').timeZone('Asia/Dubai')
   .onRun(async () => {
     const tally = await projectDrive().dailyBackups();

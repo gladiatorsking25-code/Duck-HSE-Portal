@@ -53,7 +53,8 @@
           <tr><td>Your account: email address, free-trial and subscription status</td><td>Your account (Google Firebase)</td></tr>
           <tr><td>Projects you create or join, their tracked items and activity log</td><td>Your account (Google Firebase), shared with that project's team</td></tr>
           <tr><td>Inspection checklists, permits, lift assessments, signatures, names and notes</td><td>This device (browser storage), with a copy in your account while you are signed in</td></tr>
-          <tr><td>Certificate photos and HSE audit evidence files</td><td>This device only (browser <code>IndexedDB</code>)</td></tr>
+          <tr><td>Files and photos added to a project, and that project's backups</td><td>The operator's Google Drive (a shared drive), shared with that project's team through the app</td></tr>
+          <tr><td>Certificate photos and HSE audit evidence files</td><td>This device only (browser <code>IndexedDB</code>), unless you add them to a project</td></tr>
           <tr><td>Payment details</td><td>Held by Stripe (website) or Google Play (Android app), never by this app. The app keeps only your plan and its status.</td></tr>
           <tr><td>Terms / Privacy acceptance record</td><td>This device only</td></tr>
         </table>
@@ -114,7 +115,7 @@
         <table class="spec-table">
           <tr><td>Email</td><td><a id="contactEmail" href="#">—</a></td></tr>
           <tr id="contactPhoneRow" hidden><td>Phone</td><td><a id="contactPhone" href="#">—</a></td></tr>
-          <tr><td>What is deleted</td><td>Account record, sign-in identity, the records copied to your account, and your membership of every project. Projects you own are handed to another manager or deleted, as you choose.</td></tr>
+          <tr><td>What is deleted</td><td>Account record, sign-in identity, the records copied to your account, and your membership of every project. Projects you own are handed to another manager or deleted, as you choose. Files you added to a project stay with that project for its team, unless you ask for them to be removed. Your email may also remain in that project's existing backups until newer backups replace them (at most about a month for nightly backups); on request, the operator deletes those backups sooner.</td></tr>
           <tr><td>What may be retained, and why</td><td>Records the operator is required to keep by law (for example accounting/VAT records of a paid subscription), retained only for the statutory period and then deleted</td></tr>
           <tr><td>Response time</td><td>Acknowledged within 7 days; completed within 30 days</td></tr>
         </table>

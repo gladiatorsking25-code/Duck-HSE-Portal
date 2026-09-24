@@ -79,6 +79,25 @@ test('file names lose folders and odd characters but keep their extension', () =
   assert.ok(long.name.endsWith('.xlsx'));
 });
 
+test('direction controls cannot disguise a file name', () => {
+  // "invoice_\u202Efdp.rtf" displays as "invoice_ftr.pdf" if the control is kept.
+  assert.deepEqual(F.cleanName('invoice_\u202Efdp.rtf'), { name: 'invoice_fdp.rtf', ext: 'rtf' });
+  assert.equal(F.cleanName('a\u2066b\u2069c\u200F.pdf').name, 'abc.pdf');
+  refuses(() => upload('ed', { name: 'photo_\u202Egpj.exe' }, PDF), /cannot be added/);
+});
+
+test('names of built-in object properties are not file types', () => {
+  for (const name of ['x.constructor', 'x.__proto__', 'x.tostring', 'x.hasownproperty', 'x.valueof']) {
+    refuses(() => upload('ed', { name }, PDF), /cannot be added/);
+  }
+});
+
+test('limit messages say that deleted files still count for 30 days', () => {
+  refuses(() => upload('ed', { name: 'a.pdf' }, PDF, QUOTA), /deleted in the last 30 days/);
+  assert.match(F.projectFilesMessage(), /5000 files.*30 days/);
+  assert.match(F.userQuotaMessage(0, 10 * 1048576), /across your projects.*10 MB.*20000 files/);
+});
+
 test('a link to a tracked item must look like an item id', () => {
   assert.equal(upload('ed', { name: 'a.pdf', itemId: 'abc123' }, PDF).itemId, 'abc123');
   refuses(() => upload('ed', { name: 'a.pdf', itemId: '../x' }, PDF), /item was not found/);
@@ -127,6 +146,16 @@ test('the fingerprint changes when items change, not when only the activity log 
   const c = F.buildBackup(Object.assign({}, base, { items: [item('a', 'First', { status: 'closed' })], activity: [] }));
   assert.equal(a.fingerprint, b.fingerprint);
   assert.notEqual(a.fingerprint, c.fingerprint);
+});
+
+test('the nightly check uses the same fingerprint as the backup itself', () => {
+  const parts = { project, items: [item('a', 'First')], files: [{ id: 'f1', name: 'a.pdf' }] };
+  const b = F.buildBackup(Object.assign({ projectId: 'p1', activity: [{ id: 'x' }], now: 5, kind: 'auto' }, parts));
+  assert.equal(F.fingerprintOf(parts), b.fingerprint);
+  // Item order does not matter; a new file does.
+  assert.equal(F.fingerprintOf(Object.assign({}, parts, { items: [item('b', 'B'), item('a', 'First')] })),
+    F.fingerprintOf(Object.assign({}, parts, { items: [item('a', 'First'), item('b', 'B')] })));
+  assert.notEqual(F.fingerprintOf(Object.assign({}, parts, { files: [] })), b.fingerprint);
 });
 
 test('backup file names say which project, when and what kind', () => {

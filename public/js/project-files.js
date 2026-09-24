@@ -51,7 +51,10 @@ const ProjectFiles = (function () {
       const res = await firebase.functions().httpsCallable(name, { timeout: timeout || 120000 })(data);
       return res.data;
     } catch (e) {
-      const msg = e && e.message && e.message !== 'internal' ? e.message : 'The request failed. Check the connection and try again.';
+      let msg = e && e.message && e.message !== 'internal' ? e.message : 'The request failed. Check the connection and try again.';
+      if (e && /deadline-exceeded$/.test(String(e.code || ''))) {
+        msg = 'This is taking too long. It may still finish: check the list in a minute before trying again.';
+      }
       throw Object.assign(new Error(msg), { code: e && e.code });
     }
   }
@@ -82,7 +85,8 @@ const ProjectFiles = (function () {
 
   // Large JPEG/PNG/WebP photos are redrawn at no more than 2400 px on the long
   // side, as JPEG. That keeps them readable while saving space, and it drops
-  // the hidden location data phones put in photos.
+  // the hidden location data phones put in photos. A redrawn copy is used only
+  // when it is smaller; HEIC and GIF are sent as they are.
   async function shrinkPhoto(file) {
     const ext = extOf(file.name);
     if (!['jpg', 'jpeg', 'png', 'webp'].includes(ext) || file.size <= SHRINK_OVER) return { blob: file, name: file.name };
@@ -114,7 +118,10 @@ const ProjectFiles = (function () {
   async function upload(projectId, file, opts) {
     const problem = precheck(file);
     if (problem) throw new Error(problem);
-    const prepared = await shrinkPhoto(file);
+    // Drawings, certificates and scans keep their full detail unless they are
+    // too big to send at all.
+    const prepared = opts.category === 'photo' || file.size > MAX_FILE_BYTES
+      ? await shrinkPhoto(file) : { blob: file, name: file.name };
     if (prepared.blob.size > MAX_FILE_BYTES) {
       throw new Error(`${file.name} is ${fmtSize(prepared.blob.size)}. Files can be at most 7 MB. Save a smaller copy (for example, a compressed PDF) and try again.`);
     }
@@ -146,6 +153,8 @@ const ProjectFiles = (function () {
   let backups = [];
   let stopBackups = null;
   let presetItem = '';
+  let uploading = false;
+  let lastFocus = null;
 
   function canEdit() { const p = ctx.project(); return Projects.can.edit(p, ctx.uid()) && p.status !== 'archived'; }
   function canManage() { return Projects.can.manage(ctx.project(), ctx.uid()); }
@@ -231,14 +240,15 @@ const ProjectFiles = (function () {
     card.hidden = !canManage();
     if (card.hidden) return;
     const archived = ctx.project().status === 'archived';
-    $('backupNowBtn').hidden = archived;
     $('backupList').innerHTML = backups.length ? backups.map((b) => `<li>
         <span class="m-email">${esc(fmtWhen(b.createdAtMs))}<br><span class="item-sub">${esc(BACKUP_KINDS[b.kind] || b.kind)} · ${esc(b.itemCount)} item${b.itemCount === 1 ? '' : 's'} · ${esc(b.fileCount)} file${b.fileCount === 1 ? '' : 's'}</span></span>
         <span class="m-actions">
-          <button class="btn btn-sm" type="button" data-backup-download="${esc(b.id)}">Download</button>
+          ${Number(b.size) > MAX_FILE_BYTES ? '<span class="item-sub">Too large to download here</span>'
+            : `<button class="btn btn-sm" type="button" data-backup-download="${esc(b.id)}">Download</button>`}
           ${archived ? '' : `<button class="btn btn-sm" type="button" data-restore="${esc(b.id)}">Restore items</button>`}
         </span></li>`).join('')
-      : '<li class="item-sub">No backups yet. The first daily backup runs tonight.</li>';
+      : `<li class="item-sub">${archived ? 'No backups yet. Archived projects are not backed up nightly; use Back up now.'
+        : 'No backups yet. The first nightly backup runs tonight.'}</li>`;
   }
 
   function openUpload(itemId) {
@@ -264,20 +274,34 @@ const ProjectFiles = (function () {
     const cat = $('fCategory').value;
     const opts = { note: $('fNote').value.trim(), itemId: $('fItem').value };
     $('fileSaveBtn').disabled = true;
+    uploading = true;
     const failed = [];
+    const failedFiles = [];
     let done = 0;
-    for (const file of picked) {
-      banner($('fileFormMsg'), 'info', `Uploading ${file.name} (${done + 1} of ${picked.length})…`);
+    for (const [i, file] of picked.entries()) {
+      banner($('fileFormMsg'), 'info', `Uploading ${file.name} (${i + 1} of ${picked.length})…`);
       try {
         const category = cat === 'auto' ? (VIEWABLE[extOf(file.name)] || /^hei[cf]$/.test(extOf(file.name)) ? 'photo'
           : /^(dwg|dxf)$/.test(extOf(file.name)) ? 'drawing' : 'document') : cat;
         await upload(ctx.projectId, file, Object.assign({ category }, opts));
         done++;
-      } catch (err) { failed.push(`${file.name}: ${err.message}`); }
+      } catch (err) {
+        failed.push(`${file.name}: ${err.message}`);
+        failedFiles.push(file);
+      }
     }
+    uploading = false;
     $('fileSaveBtn').disabled = false;
     if (failed.length) {
-      banner($('fileFormMsg'), 'danger', (done ? `${done} uploaded. ` : '') + failed.join(' '));
+      // Leave only the files that failed selected, so Upload retries just those.
+      let kept = true;
+      try {
+        const dt = new DataTransfer();
+        failedFiles.forEach((f) => dt.items.add(f));
+        $('fFiles').files = dt.files;
+      } catch (e) { $('fFiles').value = ''; kept = false; }
+      banner($('fileFormMsg'), 'danger', (done ? `${done} uploaded. ` : '') + failed.join(' ') +
+        (kept ? ' The files that failed are still selected: press Upload to try them again.' : ' Choose the files that failed and upload them again.'));
     } else {
       $('fileModal').hidden = true;
       banner($('filesMsg'), 'ok', done === 1 ? 'File added.' : `${done} files added.`);
@@ -302,7 +326,9 @@ const ProjectFiles = (function () {
       img.alt = res.name;
       $('viewTitle').textContent = res.name;
       $('viewDownload').onclick = () => saveBlob(blob, res.name);
+      lastFocus = document.activeElement;
       $('viewModal').hidden = false;
+      $('viewModal').querySelector('.modal-foot [data-close]').focus();
       return;
     }
     // Saved as a plain download, never opened as a page in this site.
@@ -371,11 +397,19 @@ const ProjectFiles = (function () {
       } catch (err) { banner($('backupMsg'), 'danger', ctx.friendly(err)); }
       $('backupNowBtn').disabled = false;
     });
+    // The upload window stays open while files are being sent, so no failure
+    // message can be hidden.
+    const closeModal = (id) => {
+      if (id === 'fileModal' && uploading) return;
+      if ($(id).hidden) return;
+      $(id).hidden = true;
+      if (id === 'viewModal' && lastFocus && document.contains(lastFocus)) lastFocus.focus();
+    };
     ['fileModal', 'viewModal'].forEach((id) => {
-      $(id).addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target === $(id)) $(id).hidden = true; });
+      $(id).addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target === $(id)) closeModal(id); });
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') ['fileModal', 'viewModal'].forEach((id) => { $(id).hidden = true; });
+      if (e.key === 'Escape') ['fileModal', 'viewModal'].forEach(closeModal);
     });
 
     col(ctx.projectId, 'files').orderBy('uploadedAt', 'desc').onSnapshot((snap) => {
@@ -400,5 +434,9 @@ const ProjectFiles = (function () {
     renderBackups();
   }
 
-  return { init, onProject, renderFiles, renderItemFiles, precheck, extOf, fmtSize, MAX_FILE_BYTES, EXTENSIONS };
+  // True while the upload window or photo viewer is open (they sit on top of
+  // the item window, so Escape must close them first).
+  function modalOpen() { return !$('fileModal').hidden || !$('viewModal').hidden; }
+
+  return { init, onProject, renderFiles, renderItemFiles, modalOpen, precheck, extOf, fmtSize, MAX_FILE_BYTES, EXTENSIONS };
 })();
