@@ -24,8 +24,8 @@
   "iconUrl": "https://HOST_DOMAIN/assets/icons/icon-512.png",
   "maskableIconUrl": "https://HOST_DOMAIN/assets/icons/icon-maskable-512.png",
   "splashScreenFadeOutDuration": 300,
-  "appVersionName": "1.10.0",
-  "appVersionCode": 17,
+  "appVersionName": "1.11.0",
+  "appVersionCode": 18,
   "shortcuts": [
     {
       "name": "Projects",
@@ -58,7 +58,7 @@
   "isMetaQuest": false,
   "fullScopeUrl": "https://HOST_DOMAIN/",
   "minSdkVersion": 21,
-  "appVersion": "1.10.0",
+  "appVersion": "1.11.0",
   "signingKey": {
     "path": "./android.keystore",
     "alias": "android"

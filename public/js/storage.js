@@ -67,10 +67,13 @@ const DB = {
   },
 
   // ---- Permits ----
+  // Permits saved before other permit types existed have no permitType; they
+  // are lifting permits, so they read back as such.
   getPermits() {
-    return this._get(this.KEYS.permits);
+    return this._get(this.KEYS.permits).map(p => (p && !p.permitType) ? Object.assign({}, p, { permitType: 'lifting' }) : p);
   },
   savePermit(permit) {
+    permit.permitType = permit.permitType || 'lifting';
     const list = this.getPermits();
     const idx = list.findIndex(p => p.id === permit.id);
     if (idx >= 0) {
@@ -88,11 +91,21 @@ const DB = {
     this._set(this.KEYS.permits, list);
     this._cloudRemove('permits', id);
   },
-  nextPermitNumber() {
-    let n = parseInt(localStorage.getItem(this.KEYS.counter) || '0', 10) + 1;
-    localStorage.setItem(this.KEYS.counter, String(n));
+  // Each permit type has its own prefix and counter (lifting keeps the
+  // original LP counter). The next number also accounts for permits already
+  // on file, so a wiped or new device never reissues a number.
+  nextPermitNumber(type = 'lifting') {
+    const t = typeof PermitTypes !== 'undefined' ? PermitTypes.byKey(type) : null;
+    const prefix = t ? t.prefix : 'LP';
+    const key = type === 'lifting' ? this.KEYS.counter : `${this.KEYS.counter}_${type}`;
+    const counter = parseInt(localStorage.getItem(key) || '0', 10) || 0;
     const year = new Date().getFullYear();
-    return `LP-${year}-${String(n).padStart(4, '0')}`;
+    const numbers = this.getPermits().map(p => p.permitNumber);
+    let next;
+    if (typeof PermitTypes !== 'undefined') next = PermitTypes.nextNumber(prefix, year, counter, numbers);
+    else next = { seq: counter + 1, number: `${prefix}-${year}-${String(counter + 1).padStart(4, '0')}` };
+    localStorage.setItem(key, String(next.seq));
+    return next.number;
   },
 
   // ---- Equipment checklists (monthly inspection & maintenance) ----

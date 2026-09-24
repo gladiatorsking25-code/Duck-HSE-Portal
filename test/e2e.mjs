@@ -140,7 +140,7 @@ try {
   await alice.reload();
   await alice.waitForFunction(() => document.getElementById('statProjects')?.textContent === '1', null, { timeout: 15000 });
   assert.equal(await alice.textContent('.topbar .crumb'), 'Your HSE work at a glance');
-  assert.equal(await alice.locator('.module-card').count(), 4);
+  assert.equal(await alice.locator('.module-card').count(), 5);
   assert.match(await alice.textContent('#coming-due'), /FL-07[\s\S]*Overdue/);
   assert.match(await alice.textContent('#recent-records'), /Inspection[\s\S]*FL-07[\s\S]*Not fit for use/);
   assert.doesNotMatch(await alice.textContent('body'), /lifting activity|Not for operational lift decisions/);
@@ -153,6 +153,164 @@ try {
     await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'dashboard-mobile.png'), fullPage: true });
     await alice.setViewportSize({ width: 1280, height: 720 });
   }
+
+  // 10b. Permits to work: old lifting permits still show; a confined space
+  // permit is blocked by a bad gas reading, then issued, tracked on the
+  // project, and closed out.
+  const hour = 36e5;
+  await alice.evaluate((h) => localStorage.setItem('cla_permits', JSON.stringify([{
+    id: 'P-legacy', permitNumber: 'LP-2026-0003', location: 'Berth 4', personInCharge: 'Old PIC', status: 'active',
+    isCriticalLift: true, validFrom: new Date(Date.now() - h).toISOString(), validTo: new Date(Date.now() + 5 * h).toISOString()
+  }])), hour);
+  await alice.goto(BASE + 'permits.html?type=lifting');
+  await alice.waitForSelector('#tableWrap tbody tr');
+  assert.match(await alice.textContent('#tableWrap'), /LP-2026-0003[\s\S]*Lifting[\s\S]*Critical lift[\s\S]*Active/);
+  assert.equal(await alice.isVisible('#filterType'), true, 'lift filter shown for lifting');
+
+  await alice.goto(BASE + 'permit.html');
+  await alice.waitForSelector('#typeChooser .type-card');
+  assert.ok(await alice.locator('#typeChooser .type-card').count() >= 4);
+  assert.equal(await alice.isVisible('#btnSave'), false);
+  await alice.click('#typeChooser a[href="permit.html?type=confined_space"]');
+  await alice.waitForURL(/type=confined_space/);
+  assert.match(await alice.textContent('#pageTitle'), /^New confined space/i);
+  assert.equal(await alice.isVisible('#liftingSection'), false, 'no crane sections on a confined space permit');
+  await alice.waitForFunction(() => [...document.querySelectorAll('#projectLink option')].some((o) => /Tower Crane Works/.test(o.textContent)), null, { timeout: 15000 });
+
+  await alice.fill('#location', 'Tank T-4, Unit 2');
+  await alice.fill('#workDescription', 'Internal inspection of tank T-4');
+  await alice.selectOption('#projectLink', { label: 'P-2041 · Tower Crane Works' });
+  await alice.fill('#personInCharge', 'R. Khan');
+  await alice.check('#chkRiskAssessment');
+  await alice.check('#chkMethodStatement');
+  await alice.fill('#validTo', await alice.evaluate(() => {
+    const d = new Date(Date.now() + 4 * 36e5); const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }));
+  // Every type-specific field and precaution, filled from the registry.
+  await alice.evaluate(() => {
+    const t = PermitTypes.byKey('confined_space');
+    t.fields.forEach((f) => {
+      const el = document.getElementById('fld_' + f.key);
+      el.value = f.kind === 'select' ? f.options[0] : f.kind === 'list' ? 'Entrant One\nEntrant Two' : f.kind === 'number' ? '3' : f.kind === 'datetime' ? document.getElementById('validFrom').value : 'Checked';
+    });
+    t.checks.forEach((c) => { document.getElementById('chk_' + c.key).checked = true; });
+  });
+  const gas = alice.locator('#gasRows tr').first();
+  await gas.locator('[data-k="o2"]').fill('18.2');
+  for (const k of ['lel', 'h2s', 'co']) if (await gas.locator(`[data-k="${k}"]`).count()) await gas.locator(`[data-k="${k}"]`).fill('0');
+  await gas.locator('[data-k="testedBy"]').fill('G. Tester');
+  await gas.locator('[data-k="instrument"]').fill('GD-7, calibrated 01/09');
+  assert.match(await gas.locator('[data-result]').textContent(), /Outside limits/);
+  await alice.fill('#issuerName', 'A. Issuer');
+  for (const sel of ['#sigIssuer']) {
+    await alice.locator(sel).scrollIntoViewIfNeeded();
+    const box = await alice.locator(sel).boundingBox();
+    await alice.mouse.move(box.x + 20, box.y + 30);
+    await alice.mouse.down();
+    await alice.mouse.move(box.x + 120, box.y + 70, { steps: 5 });
+    await alice.mouse.up();
+  }
+  await alice.click('#btnSave');
+  await alice.waitForFunction(() => /Oxygen/.test(document.getElementById('validationErrors').textContent));
+  assert.match(await alice.textContent('#validationErrors'), /outside the limits/);
+  if (process.env.E2E_SHOTS) {
+    await alice.setViewportSize({ width: 1366, height: 900 });
+    await alice.evaluate(() => window.scrollTo(0, 0));
+    await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'permit-confined-space.png'), fullPage: true });
+    await alice.setViewportSize({ width: 1280, height: 720 });
+  }
+  await gas.locator('[data-k="o2"]').fill('20.9');
+  assert.match(await gas.locator('[data-result]').textContent(), /Within limits/);
+  await alice.click('#btnSave');
+  await alice.waitForURL(/permit\.html\?id=.*mode=view/, { timeout: 15000 });
+  const year = new Date().getFullYear();
+  assert.equal(await alice.inputValue('#permitNumber'), `CSE-${year}-0001`);
+  assert.match(await alice.textContent('#pageTitle'), new RegExp(`Confined space.*CSE-${year}-0001`, 'i'));
+  step('Confined space permit: blocked by low oxygen, issued after a good reading');
+
+  await alice.goto(BASE + 'permits.html');
+  await alice.waitForSelector('#tableWrap tbody tr:nth-child(2)');
+  assert.match(await alice.textContent('#tableWrap'), new RegExp(`CSE-${year}-0001[\\s\\S]*Confined space`, 'i'));
+  if (process.env.E2E_SHOTS) {
+    await alice.setViewportSize({ width: 1366, height: 900 });
+    await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'permits-list.png'), fullPage: true });
+    await alice.setViewportSize({ width: 1280, height: 720 });
+  }
+  await alice.selectOption('#filterPermitType', 'confined_space');
+  assert.equal(await alice.locator('#tableWrap tbody tr').count(), 1);
+  assert.equal(await alice.isVisible('#filterType'), false, 'lift filter hidden for other types');
+  // A permit from a crafted backup file cannot run script in the list.
+  const xss = '<img src=x onerror="window.__xss2=1">Tank';
+  await alice.evaluate((x) => DB.savePermit({ id: 'P-xss', permitType: 'hot_work', permitNumber: x, location: x, personInCharge: x, status: 'active', validTo: new Date(Date.now() + 36e5).toISOString() }), xss);
+  await alice.reload();
+  await alice.waitForSelector('#tableWrap tbody tr:nth-child(3)');
+  assert.ok((await alice.textContent('#tableWrap')).includes(xss), 'shown as text');
+  assert.equal(await alice.evaluate(() => window.__xss2), undefined);
+  await alice.evaluate(() => DB.deletePermit('P-xss'));
+
+  await alice.goto(BASE + 'index.html');
+  await alice.waitForSelector('#stat-cards');
+  assert.match(await alice.textContent('#stat-cards'), /Active permits\s*2\s*1 high-risk permit · 1 critical lift/);
+  assert.equal(await alice.locator('.module-card').count(), 5);
+
+  const item = await alice.evaluate(async (id) => {
+    const snap = await firebase.firestore().collection('projects').doc(id).collection('items').where('ref.kind', '==', 'permit').get();
+    return snap.docs.map((d) => d.data()).find((d) => /Confined space/i.test(d.title));
+  }, pid);
+  assert.ok(item, 'permit tracked on the project');
+  assert.match(item.title, new RegExp(`CSE-${year}-0001`));
+  assert.equal(item.status, 'in_progress');
+  assert.equal(item.priority, 'high');
+  step('Permit list, dashboard and project show the permit type');
+
+  const cseId = await alice.evaluate(() => DB.getPermits().find((p) => p.permitType === 'confined_space').id);
+  await alice.goto(BASE + 'permit.html?id=' + encodeURIComponent(cseId));
+  await alice.waitForSelector('#closeCard:not([hidden])');
+  await alice.click('#btnClose');
+  await alice.waitForFunction(() => /Record who is closing/.test(document.getElementById('closeErrors').textContent));
+  await alice.fill('#closedBy', 'R. Khan');
+  await alice.$$eval('#closeChecks input[type=checkbox]', (els) => els.forEach((e) => { e.checked = true; }));
+  await alice.click('#btnClose');
+  await alice.waitForURL(/mode=view/, { timeout: 15000 });
+  await alice.waitForSelector('#closeoutSummary:not([hidden])');
+  assert.match(await alice.textContent('#statusBanner'), /closed/i);
+  let closedItem = false;
+  for (let i = 0; i < 30 && !closedItem; i++) {
+    closedItem = await alice.evaluate(async (id) => {
+      const snap = await firebase.firestore().collection('projects').doc(id).collection('items').where('ref.kind', '==', 'permit').get();
+      return snap.docs.some((d) => /Confined space/i.test(d.data().title) && d.data().status === 'closed');
+    }, pid);
+    if (!closedItem) await alice.waitForTimeout(500);
+  }
+  assert.ok(closedItem, 'project item closed');
+  step('Closing out the permit records who closed it and closes the project item');
+
+  // Hot work stays open until the fire watch has run for an hour.
+  await alice.evaluate((y) => DB.savePermit({
+    id: 'P-hw', permitType: 'hot_work', permitNumber: `HW-${y}-0001`, location: 'Pipe rack 3', personInCharge: 'W. Welder',
+    status: 'active', validFrom: new Date(Date.now() - 3 * 36e5).toISOString(), validTo: new Date(Date.now() + 36e5).toISOString(),
+    details: { hotWorkType: 'Electric arc welding' }, checks: {},
+  }), year);
+  await alice.goto(BASE + 'permit.html?id=P-hw');
+  await alice.waitForSelector('#closeCard:not([hidden])');
+  const localAgo = (mins) => alice.evaluate((m) => {
+    const d = new Date(Date.now() - m * 60000); const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }, mins);
+  await alice.fill('#closedBy', 'W. Welder');
+  await alice.$$eval('#closeChecks input[type=checkbox]', (els) => els.forEach((e) => { e.checked = true; }));
+  await alice.fill('#closefld_hotWorkEnded', await localAgo(30));
+  await alice.fill('#closefld_fireWatchEnded', await localAgo(1));
+  await alice.click('#btnClose');
+  await alice.waitForFunction(() => /at least 1 hour/.test(document.getElementById('closeErrors').textContent));
+  await alice.fill('#closefld_hotWorkEnded', await localAgo(75));
+  await alice.click('#btnClose');
+  await alice.waitForURL(/id=P-hw.*mode=view/, { timeout: 15000 });
+  await alice.waitForSelector('#closeoutSummary:not([hidden])');
+  assert.match(await alice.textContent('#closeoutSummary'), /Fire watch ended at/);
+  assert.equal(await alice.evaluate(() => DB.getPermits().find((p) => p.id === 'P-hw').status), 'closed');
+  step('Hot work cannot be closed until the fire watch has run for an hour');
 
   // 11. Delete my data: nobody signed out can erase; signed in needs the password.
   const visitor = await newUser();

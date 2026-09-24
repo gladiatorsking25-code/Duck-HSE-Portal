@@ -1,7 +1,7 @@
 {
   "name": "Duck HSE Portal",
   "short_name": "Duck HSE",
-  "description": "HSE management for teams: projects and action tracking, equipment inspections, HSE audit evidence packs, and lifting operations. A planning and record-keeping aid; it does not replace competent-person judgement or applicable regulations.",
+  "description": "HSE management for teams: projects and action tracking, permits to work, equipment inspections, HSE audit evidence packs, and lifting operations. A planning and record-keeping aid; it does not replace competent-person judgement or applicable regulations.",
   "id": "/crane-lifting-assessment/",
   "start_url": "./index.html",
   "scope": "./",

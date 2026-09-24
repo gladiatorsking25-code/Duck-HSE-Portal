@@ -23,7 +23,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Duck HSE">
-<meta name="description" content="HSE management for teams: projects and action tracking, equipment inspections, HSE audit evidence packs, and lifting operations (crane assessments and lifting permits). Works on phone, tablet and desktop.">
+<meta name="description" content="HSE management for teams: projects and action tracking, permits to work, equipment inspections, HSE audit evidence packs, and crane lift assessments. Works on phone, tablet and desktop.">
 <link rel="icon" href="assets/icons/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
@@ -59,6 +59,11 @@
           <div class="module-links"><a href="projects.html">Open projects</a></div>
         </div>
         <div class="card module-card">
+          <h3>Permits to work</h3>
+          <p>Hot work, confined space, work at height, excavation, energy isolation, lifting and general work permits.</p>
+          <div class="module-links"><a href="permit.html">New permit</a><a href="permits.html">Permits</a></div>
+        </div>
+        <div class="card module-card">
           <h3>Inspections</h3>
           <p>Monthly equipment inspection checklists with colour codes, certificates and email forwarding.</p>
           <div class="module-links"><a href="checklist.html">New inspection</a><a href="checklists.html">Records</a></div>
@@ -70,8 +75,8 @@
         </div>
         <div class="card module-card">
           <h3>Lifting operations</h3>
-          <p>Crane load-chart assessments, the crane selector, and lifting permits to work.</p>
-          <div class="module-links"><a href="assessment.html">New lift assessment</a><a href="permits.html">Lifting permits</a></div>
+          <p>Crane load-chart assessments, the crane selector, and lifting permits.</p>
+          <div class="module-links"><a href="assessment.html">New lift assessment</a><a href="permits.html?type=lifting">Lifting permits</a></div>
         </div>
       </div>
 
@@ -92,6 +97,7 @@
 <script src="js/checklist-data.js"></script>
 <script src="js/projects.js"></script>
 <script src="js/nav.js"></script>
+<script src="js/permit-types.js"></script>
 <script>
 renderSidebar('index');
 renderDisclaimer('disclaimer-banner');
@@ -207,8 +213,10 @@ const notFit = latestInspections.filter(c => c.verdict === 'unfit');
 const typeName = (id) => { const t = ChecklistData.typeById(id); return t ? (t.name.en || id) : (id || 'Equipment'); };
 const equipmentLabel = (c) => `${typeName(c.equipmentType)}${c.assetNo ? ' ' + c.assetNo : ''}`;
 
-const activePermits = permits.filter(p => new Date(p.validTo) >= now && p.status !== 'suspended');
-const criticalOpen = activePermits.filter(p => p.isCriticalLift).length;
+const activePermits = permits.filter(p => PermitTypes.statusOf(p, now) === 'active');
+const criticalOpen = activePermits.filter(p => PermitTypes.typeKeyOf(p) === 'lifting' && p.isCriticalLift).length;
+const highRiskOpen = activePermits.filter(p => PermitTypes.typeOf(p).highRisk).length;
+const permitName = (p) => `${PermitTypes.labelOf(p)} permit ${p.permitNumber || ''}`.trim();
 
 document.getElementById('stat-cards').innerHTML = `
   <div class="card stat-card">
@@ -227,9 +235,9 @@ document.getElementById('stat-cards').innerHTML = `
     <div class="foot">equipment, from the latest inspections</div>
   </div>
   <div class="card stat-card">
-    <div class="label">Active lifting permits</div>
+    <div class="label">Active permits</div>
     <div class="value ok">${activePermits.length}</div>
-    <div class="foot">${plural(criticalOpen, 'critical lift')} open</div>
+    <div class="foot"><a href="permits.html">${plural(highRiskOpen, 'high-risk permit')} · ${plural(criticalOpen, 'critical lift')}</a></div>
   </div>
 `;
 
@@ -246,7 +254,7 @@ if (typeof Projects !== 'undefined' && typeof FIREBASE_READY !== 'undefined' && 
   }).catch(() => {});
 }
 
-// Coming due: inspections due within 7 days and lifting permits ending within 48 hours.
+// Coming due: inspections due within 7 days and permits ending within 48 hours.
 const due = [
   ...inspectionsDue.map(c => ({
     at: dueTime(c), type: 'Inspection', item: equipmentLabel(c),
@@ -256,9 +264,9 @@ const due = [
   })),
   ...permits.filter(p => {
     const hrs = (new Date(p.validTo) - now) / 36e5;
-    return hrs > -1 && hrs < 48 && p.status !== 'suspended';
+    return hrs > -1 && hrs < 48 && p.status !== 'suspended' && p.status !== 'closed';
   }).map(p => ({
-    at: new Date(p.validTo).getTime(), type: 'Lifting permit', item: `Permit ${p.permitNumber}${p.location ? ' · ' + p.location : ''}`,
+    at: new Date(p.validTo).getTime(), type: 'Permit', item: `${permitName(p)}${p.location ? ' · ' + p.location : ''}`,
     status: new Date(p.validTo) < now ? badge('fail', 'Expired') : badge('warn', 'Expiring soon'),
     when: fmtDate(p.validTo),
     href: 'permit.html?id=' + encodeURIComponent(p.id) + '&mode=view'
@@ -289,8 +297,8 @@ const recent = [
     href: 'checklist.html?id=' + encodeURIComponent(c.id)
   })),
   ...permits.map(p => ({
-    at: recordTime(p.validFrom), type: 'Lifting permit', item: `Permit ${p.permitNumber}${p.location ? ' · ' + p.location : ''}`,
-    result: p.status === 'suspended' ? badge('fail', 'Suspended') : new Date(p.validTo) < now ? badge('fail', 'Expired') : badge('ok', 'Active'),
+    at: recordTime(p.validFrom), type: 'Permit', item: `${permitName(p)}${p.location ? ' · ' + p.location : ''}`,
+    result: (s => badge({ active: 'ok', suspended: 'fail', expired: 'fail', closed: 'neutral' }[s], PermitTypes.STATUS_LABELS[s]))(PermitTypes.statusOf(p, now)),
     href: 'permit.html?id=' + encodeURIComponent(p.id) + '&mode=view'
   })),
   ...assessments.map(a => ({

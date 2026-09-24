@@ -271,14 +271,14 @@ const AssessmentDetail = (function () {
     if (!permits.length) {
       return `<div class="section-title">Linked permit</div>
         <p class="hint">This assessment is not attached to any permit-to-work.
-        <a class="no-print" href="permit.html">Raise a permit from it</a>.</p>`;
+        <a class="no-print" href="permit.html?type=lifting&amp;assessmentId=${encodeURIComponent(a.id)}">Raise a lifting permit from it</a>.</p>`;
     }
     return `
       <div class="section-title">Linked permit${permits.length > 1 ? 's' : ''}</div>
       ${permits.map(p => `
         <div class="banner banner-info">
           <div>
-            Permit <strong class="num">${esc(p.permitNumber || p.id)}</strong>
+            Lifting permit <strong class="num">${esc(p.permitNumber || p.id)}</strong>
             — ${esc(p.location || 'location not recorded')}
             ${p.isCriticalLift ? ' · <strong>critical lift</strong>' : ''}
             ${p.status ? ` · status: ${esc(p.status)}` : ''}

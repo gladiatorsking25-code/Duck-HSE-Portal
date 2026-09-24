@@ -10,8 +10,8 @@ function renderSidebar(active) {
     { key: 'assessment', href: 'assessment.html', label: 'New lift assessment', icon: 'gauge' },
     { key: 'selector', href: 'crane-selector.html', label: 'Crane selector', icon: 'search' },
     { key: 'history', href: 'history.html', label: 'Lift assessment history', icon: 'clock' },
-    { key: 'permit', href: 'permit.html', label: 'New lifting permit', icon: 'doc' },
-    { key: 'permits', href: 'permits.html', label: 'Lifting permits', icon: 'stack' },
+    { key: 'permit', href: 'permit.html', label: 'New permit', icon: 'doc' },
+    { key: 'permits', href: 'permits.html', label: 'Permits to work', icon: 'stack' },
     { key: 'settings', href: 'settings.html', label: 'Settings & backup', icon: 'gear' },
     { key: 'about', href: 'about.html', label: 'About & legal', icon: 'info' },
   ];
@@ -44,12 +44,14 @@ function renderSidebar(active) {
     <nav class="nav">
       <div class="section-label">Overview</div>
       ${group(['index', 'projects'])}
+      <div class="section-label">Permits to work</div>
+      ${group(['permit', 'permits'])}
       <div class="section-label">Inspections</div>
       ${group(['checklist', 'checklists'])}
       <div class="section-label">Audits</div>
       ${group(['audits'])}
       <div class="section-label">Lifting operations</div>
-      ${group(['assessment', 'selector', 'history', 'permit', 'permits'])}
+      ${group(['assessment', 'selector', 'history'])}
       <div class="section-label">Settings</div>
       ${group(['settings', 'about'])}
     </nav>
@@ -147,13 +149,18 @@ function mountMobileNavToggle() {
 }
 
 // The warning banner. `topic` 'lifting' adds the load-chart and ADOSH-SF
-// CoP 34.0 wording for the lifting pages; everything else gets the general one.
-function renderDisclaimer(elId, topic) {
+// CoP 34.0 wording for the lifting pages; 'ptw' is for permits to work, with
+// `code` naming the code of practice for that permit type; everything else
+// gets the general one.
+function renderDisclaimer(elId, topic, code) {
   const el = document.getElementById(elId);
   if (!el) return;
   const cop = typeof ADOSH_COP_REFERENCE !== 'undefined' ? ADOSH_COP_REFERENCE : 'ADOSH-SF CoP 34.0 – Safe Use of Lifting Equipment and Lifting Accessories';
+  const escText = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const text = topic === 'lifting'
     ? `<strong>Verify before you rely on this.</strong> An appointed person must check every lift against the crane's official, current load chart before work begins — this tool supports planning, it does not replace it. Lifting operations should be planned and controlled in line with <strong>${cop}</strong> and any other applicable local regulations, which take precedence over anything shown here.`
+    : topic === 'ptw'
+    ? `<strong>Verify before you rely on this.</strong> This form supports your site's permit-to-work system; it does not replace it. Only authorised issuers may issue permits, and gas tests and isolations must be carried out by competent people. Follow <strong>ADOSH-SF CoP 21.0 – Permit to Work Systems</strong>${code ? `, <strong>${escText(code)}</strong>` : ''} and your site's procedures, which take precedence over anything shown here.`
     : `<strong>Verify before you rely on this.</strong> This portal helps you plan, record and track HSE work. It does not replace competent-person judgement, your site's procedures, or the law. Applicable regulations, such as the ADOSH-SF codes of practice, take precedence over anything shown here.`;
   el.innerHTML = `
     <div class="banner banner-warn">
