@@ -27,3 +27,6 @@ Thumbs.db
 
 # Local fake Google Drive used by the browser tests
 test/.drive-fake/
+
+# Website zip made by tools/package-site.mjs
+dist/

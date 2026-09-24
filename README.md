@@ -10,12 +10,13 @@ and installs as an app (PWA / Android TWA).
 | Path | What it is | Where it runs |
 |---|---|---|
 | `public/` | The website: HTML, CSS, JS, icons, `.htaccess` | Your web host (Hostinger) |
-| `functions/` | Cloud Functions: trial on signup, Stripe and Play payments, project teams, admin actions | Firebase |
+| `functions/` | Cloud Functions: trial on signup, Stripe and Play payments, project teams, project files and backups in Google Drive, admin actions | Firebase |
 | `firestore.rules` | The server-side security boundary for all data | Firebase |
 | `firebase.json` | Firebase deploy config | – |
 | `test/` | Rules, unit and end-to-end tests (Firebase emulators) | Your computer / CI |
+| `tools/` | `check-deploy.mjs` (pre-launch settings check) and `package-site.mjs` (the zip for Hostinger) | Your computer |
 | `twa-manifest.json` | Android (Trusted Web Activity) build config | Bubblewrap |
-| `docs/` | Security model, Firebase and payments setup, Play Store notes, changelog | – |
+| `docs/` | Go-live guide, security model, Firebase, payments and Drive setup, Play Store notes, changelog | – |
 
 ## Security model (short version)
 
@@ -35,7 +36,9 @@ Full details: [`docs/SECURITY.md`](docs/SECURITY.md).
 Each customer creates projects and invites their team by email as manager,
 editor or viewer. Projects hold tracked items (actions, inspections, incidents,
 linked permits, assessments and checklists) with status, priority, due date and
-assignee, plus an activity log. See `docs/CHANGELOG.md` (v1.8.0) for details.
+assignee, plus an activity log. Each project also has files and photos, kept in
+the portal owner's Google Drive, and nightly backups that managers can restore
+tracked items from. See `docs/CHANGELOG.md` (v1.8.0 and v1.12.0) for details.
 
 ## Subscriptions and payments
 
@@ -50,7 +53,7 @@ cancel from **Manage plan** on the dashboard. Setup, testing and going live:
 ```
 cd test
 npm install
-npm test                   # unit tests (teams, Stripe) + Firestore rules tests (needs Java 11+)
+npm test                   # unit tests (teams, Stripe, permits, files, deploy tools) + Firestore rules tests (needs Java 11+)
 npm run test:e2e           # projects and teams in a browser, against the emulators
 npm run test:e2e:payments  # subscribe → pay → unlock → cancel, with a fake Stripe
 ```
@@ -60,13 +63,18 @@ where Playwright expects it. `functions/` needs `npm install` first.
 
 ## Deploy
 
+The full go-live guide, from an empty Hostinger site to taking payments, is
+[`docs/DEPLOY.md`](docs/DEPLOY.md). In short:
+
 1. **Firebase** (once, then whenever rules or functions change):
-   `firebase deploy --only firestore:rules,functions`
-   Setup steps: [`docs/FIREBASE_SETUP.md`](docs/FIREBASE_SETUP.md), then
-   [`docs/PAYMENTS.md`](docs/PAYMENTS.md) for Stripe.
-2. **Website:** upload the *contents* of `public/` (including the hidden
-   `.htaccess`) into `public_html/` on Hostinger. Any Hostinger plan works; no
-   Node.js is needed on the host. Turn on the free SSL certificate first.
+   `node tools/check-deploy.mjs`, then
+   `firebase deploy --only firestore:rules,functions`.
+   Payments: [`docs/PAYMENTS.md`](docs/PAYMENTS.md). Project files and
+   backups: [`docs/DRIVE_FILES.md`](docs/DRIVE_FILES.md).
+2. **Website:** `node tools/package-site.mjs` makes a zip of `public/`. Upload
+   it to `public_html/` in Hostinger's File Manager and extract it there. Any
+   Hostinger plan works; no Node.js is needed on the host. Turn on the free SSL
+   certificate first.
 3. Add your site's domain under Firebase Console → Authentication → Settings →
    Authorized domains.
 

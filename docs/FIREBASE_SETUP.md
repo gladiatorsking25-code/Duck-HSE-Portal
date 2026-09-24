@@ -1,5 +1,10 @@
 # Cloud sync, accounts & subscriptions — setup guide (Firebase)
 
+> **Going live? Follow [DEPLOY.md](DEPLOY.md) instead.** It is the current,
+> step-by-step guide. This page is background from when Firebase was first
+> added; parts of it (the local-only mode and the old login gate) no longer
+> apply.
+
 This walks through turning on the cloud backend that was scaffolded into the app.
 **Until you complete step 1–2, the app runs exactly as before** — local-only,
 username/password gate, no network calls. Nothing here is destructive; it's all
