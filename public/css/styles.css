@@ -357,12 +357,6 @@ body.printing-modal #lightboxRoot .modal {
   gap: 6px 16px;
   align-items: center;
 }
-.app-footer .trial-tag {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 2px 8px; border-radius: 20px;
-  background: var(--warn-bg); color: #7a5308; font-weight: 700; font-size: 10.5px;
-  text-transform: uppercase; letter-spacing: .04em;
-}
 .app-footer a { color: var(--navy-700); text-decoration: none; font-weight: 600; }
 .app-footer a:hover { text-decoration: underline; }
 .app-footer .sep { color: var(--line); }

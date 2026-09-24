@@ -28,7 +28,8 @@ No install; runs in any modern browser on phone, tablet or desktop.
     as such. The general warning banner, footer, sign-in page, consent screen,
     About page, app and Play shortcuts, and page descriptions now describe an HSE
     portal; the load-chart and ADOSH-SF CoP 34.0 warnings stay on the lifting
-    pages. "Fleet & backup" is now "Settings & backup".
+    pages. "Fleet & backup" is now "Settings & backup". The "Trial · Educational
+    use only" tag is gone from the footer, since the portal is now a paid product.
   - **Terms and Privacy** now describe the whole HSE portal and where data really
     lives (account, projects and synced records in Firebase; photos and audit
     evidence on the device). The consent screen asks everyone to accept the

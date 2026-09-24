@@ -168,7 +168,6 @@ function renderFooter(elId) {
   if (!el) return;
   el.innerHTML = `
     <div class="app-footer no-print">
-      <span class="trial-tag">Trial · Educational use only</span>
       <span>Supports, never replaces, competent-person decisions.</span>
       <span class="sep">|</span>
       <span>Developed by <strong>Sabir Amin</strong></span>
