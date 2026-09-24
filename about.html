@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About &amp; legal · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Version, licences, legal documents and support contacts for the Duck HSE Portal app.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>About &amp; legal</h2>
+        <div class="crumb">Version, support, and the documents that govern use of this app</div>
+      </div>
+      <a class="btn" href="index.html">Back to dashboard</a>
+    </div>
+    <div class="content" style="max-width: 860px;">
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 style="margin-top:0;">This build</h3>
+          <table class="spec-table" id="buildTable"></table>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:14px;">
+            <button class="btn" id="btnInstall" style="display:none;">Install app on this device</button>
+            <button class="btn" id="btnUpdate">Check for updates</button>
+          </div>
+          <div id="updateResult" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0;">Support</h3>
+          <table class="spec-table" id="supportTable"></table>
+          <p class="hint" style="margin-top:12px;">
+            For a bug report, include the build number above and the crane model and figures you
+            entered — that is usually enough to reproduce it.
+          </p>
+        </div>
+      </div>
+
+      <div class="section-title">Legal documents</div>
+      <div class="card">
+        <table class="spec-table">
+          <tr><td>Terms of Use</td><td><a href="terms.html">Read the Terms of Use</a></td></tr>
+          <tr><td>Privacy Notice (UAE PDPL)</td><td><a href="privacy.html">Read the Privacy Notice</a></td></tr>
+          <tr><td>Delete your data / account</td><td><a href="account-deletion.html">Data deletion options</a></td></tr>
+          <tr><td>Your acceptance on this device</td><td id="consentState">—</td></tr>
+        </table>
+      </div>
+
+      <div class="section-title">Safety scope — read this before relying on the app</div>
+      <div class="card">
+        <div class="banner banner-warn" style="margin-top:0;">
+          <div><strong>This is a planning aid, not an authority.</strong> Every lift must be
+          verified by a competent Appointed Person against the crane manufacturer's certified,
+          current load chart before work begins.</div>
+        </div>
+        <ul style="font-size:13.5px; color:var(--ink-soft); line-height:1.6;">
+          <li>Load-chart figures on file are transcribed from manufacturer specification sheets.
+          Verify them against your paper copy before first use and whenever a crane is added.</li>
+          <li>Wind limits apply whichever is <strong>lower</strong> of the crane's rated limit and
+          the ADOSH-SF site stop-work threshold. Your site's appointed person sets the final
+          figure.</li>
+          <li>Exclusion-zone distances are a calculated starting point, not a mandated barrier
+          distance. They do not account for ground slope, nearby structures, public access, or
+          overhead services.</li>
+          <li>The app does not assess ground-bearing pressure, rigging design, or crane condition.</li>
+          <li>Lifting operations must be planned and controlled in line with
+          <strong id="copRef">ADOSH-SF CoP 34.0</strong> and any other applicable local
+          regulations, which take precedence over anything shown here.</li>
+        </ul>
+      </div>
+
+      <div class="section-title">Third-party components</div>
+      <div class="card">
+        <table class="spec-table">
+          <tr><td>Application code</td><td>Written for this project — no UI framework, no build step</td></tr>
+          <tr><td>Lift diagrams</td><td>Hand-written SVG (no WebGL/three.js dependency)</td></tr>
+          <tr><td>Inter &amp; IBM Plex Mono typefaces</td><td>SIL Open Font License 1.1, served by Google Fonts</td></tr>
+          <tr><td>Firebase SDK (optional cloud sync)</td><td>Apache License 2.0 — loaded only when cloud sync is configured</td></tr>
+          <tr><td>Crane specifications &amp; load charts</td><td>Transcribed from the manufacturer's published technical specification sheets; all trademarks belong to their owners. This app is not affiliated with, endorsed by, or certified by any crane manufacturer.</td></tr>
+        </table>
+      </div>
+
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/nav.js"></script>
+<script>
+renderSidebar('');
+renderFooter('app-footer');
+
+function row(k, v) { return `<tr><td>${k}</td><td>${v}</td></tr>`; }
+
+document.getElementById('buildTable').innerHTML = [
+  row('Version', typeof APP_VERSION !== 'undefined' ? APP_VERSION : '—'),
+  row('Build (Play version code)', typeof APP_VERSION_CODE !== 'undefined' ? APP_VERSION_CODE : '—'),
+  row('Released', typeof APP_RELEASE_DATE !== 'undefined' ? APP_RELEASE_DATE : '—'),
+  row('Running as', (window.PWA && window.PWA.isStandalone()) ? 'Installed app' : 'Browser tab'),
+  row('Offline copy', ('serviceWorker' in navigator) ? 'Supported' : 'Not supported on this browser'),
+  row('Records on this device', `${DB.getAssessments().length} assessments · ${DB.getPermits().length} permits`)
+].join('');
+
+document.getElementById('supportTable').innerHTML = (typeof APP_PUBLISHER !== 'undefined') ? [
+  row('Developer', APP_PUBLISHER.developerName),
+  APP_PUBLISHER.legalEntity ? row('Licensed entity', APP_PUBLISHER.legalEntity) : '',
+  APP_PUBLISHER.licenceNumber ? row('Trade licence no.', APP_PUBLISHER.licenceNumber) : '',
+  row('Email', `<a href="mailto:${APP_PUBLISHER.email}">${APP_PUBLISHER.email}</a>`),
+  // A phone row only appears if a published contact number has been set — the
+  // developer's personal mobile is not one (see APP_PUBLISHER in app-version.js).
+  APP_PUBLISHER.phone ? row('Phone', `<a href="tel:${APP_PUBLISHER.phone.replace(/\s+/g,'')}">${APP_PUBLISHER.phone}</a>`) : ''
+].join('') : '';
+
+if (typeof ADOSH_COP_REFERENCE !== 'undefined') {
+  document.getElementById('copRef').textContent = ADOSH_COP_REFERENCE;
+}
+
+(function showConsent() {
+  const el = document.getElementById('consentState');
+  try {
+    const raw = localStorage.getItem('cla_tos_privacy_accepted_v1');
+    if (!raw) { el.textContent = 'Not yet accepted on this device'; return; }
+    const rec = JSON.parse(raw);
+    el.textContent = `Accepted ${fmtDate(rec.acceptedAt)} (version ${rec.version})`;
+  } catch (e) { el.textContent = '—'; }
+})();
+
+document.getElementById('btnUpdate').addEventListener('click', async () => {
+  const out = document.getElementById('updateResult');
+  if (!('serviceWorker' in navigator)) {
+    out.innerHTML = '<div class="banner banner-info"><div>This browser does not support offline updates.</div></div>';
+    return;
+  }
+  out.innerHTML = '<div class="hint">Checking…</div>';
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map(r => r.update()));
+    out.innerHTML = '<div class="banner banner-ok"><div>Checked. If a newer version was found you will see an "Update available" prompt at the bottom of the screen.</div></div>';
+  } catch (e) {
+    out.innerHTML = `<div class="banner banner-danger"><div>Could not check: ${e.message}</div></div>`;
+  }
+});
+
+window.addEventListener('load', () => {
+  const b = document.getElementById('btnInstall');
+  if (window.PWA && window.PWA.canInstall()) {
+    b.style.display = '';
+    b.addEventListener('click', () => window.PWA.install());
+  }
+});
+</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

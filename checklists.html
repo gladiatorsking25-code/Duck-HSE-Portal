@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/auth.js"></script>
+<script src="js/consent.js"></script>
+<script>requireConsent();</script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checklist Records · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&family=Noto+Nastaliq+Urdu:wght@400;700&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Saved monthly equipment inspection checklists, colour coded by month.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2 data-i18n="page.records.title">Checklist records</h2>
+        <div class="crumb" data-i18n="page.records.crumb"></div>
+      </div>
+      <div>
+        <a class="btn btn-primary" href="checklist.html" data-i18n="btn.newChecklist">+ New checklist</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <div id="langSwitch"></div>
+
+      <div class="toolbar">
+        <input type="search" id="search" data-i18n-placeholder="r.search">
+        <select id="filterType"></select>
+        <select id="filterResult"></select>
+        <select id="filterMonth"></select>
+        <div class="spacer"></div>
+        <button class="btn" id="btnExportCsv" data-i18n="btn.exportCsv"></button>
+      </div>
+
+      <!-- Colour legend for the current scheme -->
+      <div class="card" style="margin-bottom:16px;">
+        <div class="chk-legend" id="colourLegend"></div>
+        <p class="hint" style="margin-bottom:0;" data-i18n="c.explain"></p>
+      </div>
+
+      <div id="tableWrap"></div>
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<div id="lightboxRoot"></div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/cloud-sync.js"></script>
+<script src="js/nav.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/checklist-data.js"></script>
+<script src="js/mailer.js"></script>
+<script src="js/photo.js"></script>
+<script src="js/certificate-storage.js"></script>
+<script src="js/certificate-report.js"></script>
+<script>
+renderSidebar('checklists');
+renderFooter('app-footer');
+
+I18n.applyDocument();
+I18n.mountSwitcher('langSwitch');
+I18n.apply();
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function typeName(id) {
+  const t = ChecklistData.typeById(id);
+  return t ? I18n.pick(t.name) : (id || '—');
+}
+
+function monthLabel(monthValue) {
+  const p = ChecklistData.parseMonth(monthValue);
+  if (!p) return monthValue || '—';
+  return `${ChecklistData.monthName(p.monthIndex, I18n.get())} ${p.year}`;
+}
+
+function colourChip(rec) {
+  const p = ChecklistData.parseMonth(rec.month);
+  if (!p) return '<span class="hint">—</span>';
+  const c = ChecklistData.colourFor(p.monthIndex, rec.colourScheme);
+  const name = I18n.pick(c.name);
+  return `<span class="colour-chip" style="background:${c.hex}; color:${c.ink};"
+            title="${esc(name)}">${esc(name)}${rec.tagFitted ? ' ✓' : ''}</span>`;
+}
+
+function verdictBadge(v) {
+  const cls = v === 'fit' ? 'badge-ok' : (v === 'conditional' ? 'badge-warn' : 'badge-fail');
+  return `<span class="badge ${cls}"><span class="badge-dot"></span>${esc(I18n.t('v.' + (v || 'fit')))}</span>`;
+}
+
+function populateFilters() {
+  const ft = document.getElementById('filterType');
+  const keepT = ft.value;
+  ft.innerHTML = `<option value="">${esc(I18n.t('r.allEquipment'))}</option>` +
+    EQUIPMENT_TYPES.map(t => `<option value="${t.id}">${esc(I18n.pick(t.name))}</option>`).join('');
+  ft.value = keepT;
+
+  const fr = document.getElementById('filterResult');
+  const keepR = fr.value;
+  fr.innerHTML = `<option value="">${esc(I18n.t('r.allResults'))}</option>` +
+    ['fit', 'conditional', 'unfit'].map(v => `<option value="${v}">${esc(I18n.t('v.' + v))}</option>`).join('');
+  fr.value = keepR;
+
+  const fm = document.getElementById('filterMonth');
+  const keepM = fm.value;
+  const months = [...new Set(DB.getChecklists().map(c => c.month).filter(Boolean))].sort().reverse();
+  fm.innerHTML = `<option value="">${esc(I18n.t('r.allMonths'))}</option>` +
+    months.map(m => `<option value="${m}">${esc(monthLabel(m))}</option>`).join('');
+  fm.value = keepM;
+}
+
+function renderLegend() {
+  // Show whichever scheme the most recent record used, so the legend matches
+  // the tags actually on the machines.
+  const recs = DB.getChecklists();
+  const schemeId = recs.length ? (recs[recs.length - 1].colourScheme || 'monthly') : 'monthly';
+  const scheme = COLOUR_SCHEMES[schemeId] || COLOUR_SCHEMES.monthly;
+  const now = new Date();
+  const currentIdx = scheme.id === 'quarterly' ? Math.floor(now.getMonth() / 3) : now.getMonth();
+
+  document.getElementById('colourLegend').innerHTML = scheme.colours.map((c, i) => {
+    const label = scheme.id === 'quarterly'
+      ? I18n.pick(c.name)
+      : ChecklistData.monthName(i, I18n.get());
+    return `<span class="chk-legend-item${i === currentIdx ? ' current' : ''}">
+        <span class="chk-legend-dot" style="background:${c.hex};"></span>${esc(label)}
+      </span>`;
+  }).join('');
+}
+
+function render() {
+  const search = document.getElementById('search').value.toLowerCase();
+  const fType = document.getElementById('filterType').value;
+  const fRes = document.getElementById('filterResult').value;
+  const fMonth = document.getElementById('filterMonth').value;
+
+  let list = DB.getChecklists().slice().sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+  list = list.filter(c => {
+    if (fType && c.equipmentType !== fType) return false;
+    if (fRes && c.verdict !== fRes) return false;
+    if (fMonth && c.month !== fMonth) return false;
+    if (search) {
+      const hay = `${c.assetNo || ''} ${c.make || ''} ${c.model || ''} ${c.serial || ''} ${c.plateNo || ''} ${c.inspector || ''} ${c.location || ''} ${typeName(c.equipmentType)}`.toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+
+  const wrap = document.getElementById('tableWrap');
+  if (!list.length) {
+    wrap.innerHTML = `<div class="card empty-state"><div class="icon">🧰</div>${esc(I18n.t('r.none'))}</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="data-table">
+      <thead><tr>
+        <th data-i18n="r.month"></th>
+        <th data-i18n="r.colour"></th>
+        <th data-i18n="r.equipment"></th>
+        <th>${esc(I18n.t('f.assetNo'))}</th>
+        <th data-i18n="r.result"></th>
+        <th data-i18n="r.defects"></th>
+        <th data-i18n="r.inspector"></th><th>Certificates</th>
+        <th></th><th></th><th></th><th></th>
+      </tr></thead>
+      <tbody>
+        ${list.map(c => `
+          <tr>
+            <td class="num">${esc(monthLabel(c.month))}</td>
+            <td>${colourChip(c)}</td>
+            <td>${esc(typeName(c.equipmentType))}<div class="hint">${esc([c.make, c.model].filter(Boolean).join(' '))}</div></td>
+            <td class="num">${esc(c.assetNo || '—')}</td>
+            <td>${verdictBadge(c.verdict)}</td>
+            <td class="num">${(c.counts && c.counts.defect) || 0}</td>
+            <td>${esc(c.inspector || '—')}</td>
+            <td class="num">${Array.isArray(c.certificates) ? c.certificates.length : 0}</td>
+            <td><a class="btn btn-sm btn-primary" href="checklist.html?id=${encodeURIComponent(c.id)}">${esc(I18n.t('btn.view'))}</a></td>
+            <td><button class="btn btn-sm" onclick="emailRecord('${c.id}')">${esc(I18n.t('btn.email'))}</button></td>
+            <td><button class="btn btn-sm" onclick="shareRecordReport('${c.id}')">Share</button></td>
+            <td><button class="btn btn-sm btn-danger" onclick="removeRecord('${c.id}')">${esc(I18n.t('btn.delete'))}</button></td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+  I18n.apply(wrap);
+}
+
+function removeRecord(id) {
+  if (!confirm(I18n.t('msg.confirmDelete'))) return;
+  DB.deleteChecklist(id);
+  // Also purge this record's certificate photos from IndexedDB, or the blobs
+  // are orphaned there for good.
+  if (typeof CertificateStore !== 'undefined') {
+    CertificateStore.deleteForChecklist(id).catch(e => console.warn('Could not remove certificate photos', e));
+  }
+  populateFilters();
+  renderLegend();
+  render();
+}
+
+// Quick-forward straight from the list: builds the same draft the checklist
+// page does, and hands it over without having to open the record first.
+function emailRecord(id) {
+  const rec = DB.getChecklists().find(c => c.id === id);
+  if (!rec) return;
+  const d = ChecklistEmail.draft(rec, I18n.get());
+  const root = document.getElementById('lightboxRoot');
+  root.innerHTML = `
+    <div class="modal-backdrop" id="qeBackdrop">
+      <div class="modal" style="max-width:720px;">
+        <div class="modal-head">
+          <strong>${esc(I18n.t('em.title'))}</strong>
+          <button class="close-x" id="qeClose" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="banner banner-info"><div>${esc(I18n.t('em.note'))}</div></div>
+          <div class="form-grid">
+            <div class="field">
+              <label>${esc(I18n.t('em.from'))}</label>
+              <input type="email" id="qeFrom" placeholder="name@company.ae">
+            </div>
+            <div class="field">
+              <label>${esc(I18n.t('em.cc'))}</label>
+              <input type="text" id="qeCc" placeholder="a@b.com; c@d.com">
+            </div>
+            <div class="field full">
+              <label>${esc(I18n.t('em.to'))}</label>
+              <input type="text" id="qeTo" placeholder="a@b.com; c@d.com">
+              <span class="hint">${esc(I18n.t('em.multiHint'))}</span>
+            </div>
+            <div class="field full">
+              <label>${esc(I18n.t('em.subject'))}</label>
+              <input type="text" id="qeSubject" value="${esc(d.subject)}">
+            </div>
+            <div class="field full">
+              <label>${esc(I18n.t('em.body'))}</label>
+              <textarea id="qeBody" rows="12" style="font-family:var(--font-mono); font-size:12.5px;">${esc(d.body)}</textarea>
+            </div>
+          </div>
+          <div id="qeResult" style="margin-top:12px;"></div>
+        </div>
+        <div class="modal-foot" style="flex-wrap:wrap;">
+          <button class="btn btn-sm" id="qeRegen">${esc(I18n.t('em.regenerate'))}</button>
+          <button class="btn btn-sm" id="qeCopy">${esc(I18n.t('em.copy'))}</button>
+          <button class="btn btn-sm" id="qeOpen">${esc(I18n.t('em.openClient'))}</button>
+          <button class="btn btn-sm btn-primary" id="qeDownload">${esc(I18n.t('em.download'))}</button>
+          <button class="btn btn-sm" id="qeCancel">${esc(I18n.t('btn.close'))}</button>
+        </div>
+      </div>
+    </div>`;
+
+  const close = () => { root.innerHTML = ''; };
+  document.getElementById('qeClose').addEventListener('click', close);
+  document.getElementById('qeCancel').addEventListener('click', close);
+  document.getElementById('qeBackdrop').addEventListener('click', e => { if (e.target.id === 'qeBackdrop') close(); });
+
+  function recipients() {
+    const to = Mailer.parseAddresses(document.getElementById('qeTo').value);
+    const cc = Mailer.parseAddresses(document.getElementById('qeCc').value);
+    const bad = to.invalid.concat(cc.invalid);
+    const out = document.getElementById('qeResult');
+    if (bad.length) {
+      out.innerHTML = `<div class="banner banner-danger"><div>${esc(I18n.t('em.badAddress'))} ${esc(bad.join(', '))}</div></div>`;
+      return null;
+    }
+    if (!to.valid.length) {
+      out.innerHTML = `<div class="banner banner-danger"><div>${esc(I18n.t('em.needTo'))}</div></div>`;
+      return null;
+    }
+    return { to: to.valid, cc: cc.valid };
+  }
+  function msg(r) {
+    return {
+      from: document.getElementById('qeFrom').value.trim(),
+      to: r.to, cc: r.cc,
+      subject: document.getElementById('qeSubject').value,
+      body: document.getElementById('qeBody').value
+    };
+  }
+
+  document.getElementById('qeRegen').addEventListener('click', () => {
+    const nd = ChecklistEmail.draft(rec, I18n.get());
+    document.getElementById('qeSubject').value = nd.subject;
+    document.getElementById('qeBody').value = nd.body;
+  });
+  document.getElementById('qeOpen').addEventListener('click', () => {
+    const r = recipients(); if (!r) return;
+    Mailer.openMailto(Object.assign(msg(r), { truncationNote: I18n.t('em.note') }));
+  });
+  document.getElementById('qeDownload').addEventListener('click', () => {
+    const r = recipients(); if (!r) return;
+    Mailer.downloadEml(msg(r), ChecklistEmail.filenameFor(rec));
+    document.getElementById('qeResult').innerHTML =
+      `<div class="banner banner-ok"><div>${esc(I18n.t('em.download'))} ✓</div></div>`;
+  });
+  document.getElementById('qeCopy').addEventListener('click', async () => {
+    const text = `${I18n.t('em.subject')}: ${document.getElementById('qeSubject').value}\n\n${document.getElementById('qeBody').value}`;
+    const ok = await Mailer.copyText(text);
+    document.getElementById('qeResult').innerHTML = ok
+      ? `<div class="banner banner-ok"><div>${esc(I18n.t('em.copied'))}</div></div>`
+      : `<div class="banner banner-warn"><div>${esc(I18n.t('em.copy'))} ✕</div></div>`;
+  });
+}
+
+async function shareRecordReport(id) {
+  const rec = DB.getChecklists().find(c => c.id === id);
+  if (!rec) return;
+  try {
+    const result = await CertificateReport.share(rec);
+    alert(result.shared ? 'Report shared. Select Email or WhatsApp from the share sheet.' : result.downloaded ? 'Report downloaded. Attach it to Email or WhatsApp.' : 'Share cancelled.');
+  } catch (e) {
+    console.error(e);
+    alert('Could not share the report.');
+  }
+}
+
+document.getElementById('btnExportCsv').addEventListener('click', () => {
+  const rows = [['Saved at', 'Month', 'Colour', 'Tag fitted', 'Equipment type', 'Make', 'Model', 'Serial',
+    'Asset no.', 'Plate no.', 'Hour meter', 'Location', 'Project', 'Contractor',
+    'Inspection date', 'Next due', 'Inspector', 'Supervisor', 'Result',
+    'Items', 'OK', 'Monitor', 'Defect', 'N/A', 'Remarks']];
+  DB.getChecklists().forEach(c => {
+    const p = ChecklistData.parseMonth(c.month);
+    const col = p ? ChecklistData.colourFor(p.monthIndex, c.colourScheme) : null;
+    const n = c.counts || {};
+    rows.push([
+      c.savedAt || '', c.month || '', col ? col.name.en : '', c.tagFitted ? 'YES' : 'NO',
+      typeName(c.equipmentType), c.make || '', c.model || '', c.serial || '',
+      c.assetNo || '', c.plateNo || '', c.hourMeter || '', c.location || '', c.project || '', c.contractor || '',
+      c.inspectionDate || '', c.nextDue || '', c.inspector || '', c.supervisor || '',
+      (c.verdict || '').toUpperCase(),
+      n.total || 0, n.ok || 0, n.monitor || 0, n.defect || 0, n.na || 0,
+      (c.remarks || '').replace(/\n/g, ' ')
+    ]);
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  // BOM so Excel opens the Arabic/Urdu/Hindi columns as UTF-8 rather than mojibake.
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `equipment-checklists-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+});
+
+document.getElementById('search').addEventListener('input', render);
+document.getElementById('filterType').addEventListener('change', render);
+document.getElementById('filterResult').addEventListener('change', render);
+document.getElementById('filterMonth').addEventListener('change', render);
+
+document.addEventListener('i18n:changed', () => {
+  I18n.apply();
+  populateFilters();
+  renderLegend();
+  render();
+});
+
+populateFilters();
+renderLegend();
+render();
+</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

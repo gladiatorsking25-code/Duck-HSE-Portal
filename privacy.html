@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/auth.js"></script>
+<!-- This page is intentionally NOT gated by requireAuth(). Google Play requires
+     the privacy policy URL submitted in Play Console to be publicly reachable,
+     without signing in or installing the app; a policy behind a login screen is
+     a routine cause of rejection. js/auth.js is still loaded so the shared
+     sidebar's "Sign out" link keeps working for users who arrive from inside
+     the app. -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Notice · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>Privacy Notice</h2>
+        <div class="crumb">Last updated: 11 September 2026</div>
+      </div>
+      <a class="btn" href="index.html">Back to dashboard</a>
+    </div>
+    <div class="content" style="max-width: 800px;">
+
+      <div class="banner banner-warn">
+        <strong>Not legal advice.</strong> This is a draft starting point, written with
+        UAE Federal Decree-Law No. 45 of 2021 on the Protection of Personal Data
+        ("PDPL") in mind. Have it reviewed by a UAE-licensed lawyer before commercial
+        launch — the right approach can differ depending on whether your business is
+        onshore, or licensed in a free zone such as DIFC or ADGM (which have their own,
+        separate data protection regimes that can apply instead of or alongside the
+        federal PDPL).
+      </div>
+
+      <div class="section-title" style="margin-top:0;">1. What personal data this app handles</div>
+      <p>Depending on how you use it, the App may store:</p>
+      <ul>
+        <li>Names of assessors, issuers, approvers, verifiers, persons in charge, and contractors entered into assessments and permits;</li>
+        <li>Names of inspectors, operators and supervisors, and the equipment identifiers (asset, plate and serial numbers) entered into monthly equipment checklists;</li>
+        <li>Photographs of third-party certificates you attach to a checklist — inspection certificates, operator/rigger/banksman competency certificates and lifting-accessory certificates. These images can contain personal data (a named certificate holder, a photograph on a licence, an issuer's stamp). They are resized and stored on your own device in the browser's IndexedDB, alongside the certificate details (number, issuer, issue and expiry dates) held in the checklist record;</li>
+        <li>Email addresses you type into the checklist forwarding screen. These are used only to address that one message and are handed straight to your own email app — they are not stored by the App, and there is no address book or sending history;</li>
+        <li>Handwritten signatures captured on-screen for permit sign-off;</li>
+        <li>Free-text notes you choose to enter;</li>
+        <li>Sign-in identifiers used by the app's access gate (see the Terms of Use and the app's README for how that gate currently works).</li>
+      </ul>
+      <p>It does <strong>not</strong> collect health data, financial/payment card data
+      (payment for any paid subscription is handled entirely by Google Play, not by this
+      app), precise device location, or advertising identifiers.</p>
+
+      <div class="section-title">2. Where this data is stored today</div>
+      <p>In the current build, all of the data listed above is stored only in your
+      device's browser storage (<code>localStorage</code>), scoped to the page you open
+      the App from. <strong>Nothing is transmitted to any server</strong> — there is no
+      backend in this build. That means:</p>
+      <ul>
+        <li>The developer/operator cannot see, access, or process your data, because it never leaves your device;</li>
+        <li>Data does not sync between your devices automatically;</li>
+        <li>Clearing your browser's site data, or uninstalling the app if wrapped for
+        an app store, deletes this data permanently unless you have exported a backup
+        (see the Fleet & Backup page).</li>
+      </ul>
+
+      <div class="section-title">3. If cloud sync / accounts are added later</div>
+      <p>A paid, multi-device version of this App would need a real backend (for
+      example Firebase or Supabase) to sync data and verify subscriptions. If and when
+      that happens, this notice will be updated to name the specific processor(s) used,
+      where they host data, and the safeguards applied to any cross-border transfer, as
+      required by PDPL Articles 20–24. Until this notice is updated to describe such a
+      backend, no such transfer is taking place.</p>
+
+      <div class="section-title">3a. Cross-border transfer, if and when cloud sync is switched on</div>
+      <p>The optional cloud-sync build uses <strong>Google Firebase</strong> (Firebase
+      Authentication and Cloud Firestore) as a data processor. Firebase does not currently
+      offer a UAE data-region, so enabling cloud sync means personal data you enter is
+      <strong>transferred to and stored outside the UAE</strong> — in whichever Google Cloud
+      region the Firestore database is created in, which is chosen once and cannot be changed
+      afterwards.</p>
+      <p>PDPL Articles 22 and 23 permit such a transfer where the destination has an adequate
+      level of protection recognised by the UAE Data Office, or — failing that — where it is
+      covered by an appropriate contractual safeguard or by your explicit consent after being
+      informed of the risk. The safeguard relied on here is Google's Cloud Data Processing
+      Addendum, together with the consent recorded through the in-app acceptance screen.
+      <strong>If you do not want your data leaving the UAE, do not create a cloud account</strong>
+      — the app is fully functional without one, and local-only data never leaves your device.</p>
+      <p>Before enabling cloud sync commercially, confirm with a UAE-licensed lawyer which
+      Firestore region to choose and whether your specific customers (government or
+      critical-infrastructure clients in particular) are subject to data-localisation
+      requirements stricter than the general PDPL position.</p>
+
+      <div class="section-title">3b. Payments and subscriptions</div>
+      <p>Any paid subscription is sold and processed entirely by <strong>Google Play
+      Billing</strong>. The App never sees, receives, or stores your card number, bank details,
+      or billing address. What the App may receive from Google is a purchase token and
+      subscription status used solely to unlock paid features. Google's own privacy policy
+      governs the payment itself.</p>
+
+      <div class="section-title">4. Legal basis for processing</div>
+      <p>Where the App does process personal data (locally, as described above), the
+      basis relied on is your consent, given when you accept these terms via the
+      in-app consent screen, and/or the performance of the lift-planning and
+      permit-to-work record-keeping function you are using the App for.</p>
+
+      <div class="section-title">5. Your rights under PDPL</div>
+      <p>Subject to the exceptions PDPL provides, you have the right to: request access
+      to personal data concerning you; request correction or erasure of it; restrict or
+      object to its processing; request its transfer to another controller (data
+      portability); and withdraw consent at any time. Because this build stores data
+      only on your own device, you can exercise most of these rights directly — edit or
+      delete any record from the History, Permits, or Fleet & Backup pages, or use
+      "Erase all local data" on the Fleet & Backup page to remove everything at once.</p>
+
+      <div class="section-title">6. Signatures</div>
+      <p>On-screen signatures are stored as images alongside the permit record, in the
+      same local storage as everything else. They are used solely to represent sign-off
+      on a permit-to-work document and are not analyzed, shared, or used for any other
+      purpose by the App.</p>
+
+      <div class="section-title">7. Children</div>
+      <p>This App is intended for use by adult workplace safety professionals and is
+      not directed at children. It should not knowingly be used to collect personal
+      data from children.</p>
+
+      <div class="section-title">8. Complaints</div>
+      <p>If you believe your personal data has been processed in a way that is not
+      consistent with PDPL, you may raise this with the developer/operator using the
+      contact details in the app footer, and/or with the UAE Data Office, which
+      administers PDPL, or the relevant free-zone data protection authority (DIFC or
+      ADGM Commissioner of Data Protection) if applicable to the entity operating this
+      App.</p>
+
+      <div class="section-title">9. Changes to this notice</div>
+      <p>This notice will be updated as features change (particularly if cloud sync or
+      a payment backend is introduced). The "Last updated" date above will reflect the
+      most recent revision.</p>
+
+      <div class="section-title">10. Retention — how long data is kept</div>
+      <p>Local data is kept on your device until you delete it; nothing expires on its own, and
+      the developer has no ability to delete it for you. If cloud sync is enabled, synced records
+      are kept while the account is active and deleted within 30 days of an account-deletion
+      request, except where a record must be retained to meet a legal obligation (for example
+      accounting and VAT records relating to a paid subscription, which UAE tax law requires be
+      kept for a set period). Retained records are kept only for that purpose and deleted at the
+      end of the statutory period.</p>
+
+      <div class="section-title">11. How to delete your data</div>
+      <p>Every deletion route — erasing all data on the device, uninstalling, and requesting
+      deletion of a cloud account and its synced records — is set out on the
+      <a href="account-deletion.html">Delete your data</a> page, which is publicly reachable
+      without signing in. That page is also the account-deletion URL submitted to Google Play.</p>
+
+      <div class="section-title">12. Data controller and contact</div>
+      <p>The data controller is the developer/operator of the App, whose current contact details
+      are shown in the app footer and on the <a href="about.html">About &amp; legal</a> page. Once
+      the operating business is licensed in the UAE, the licensed entity name, trade licence
+      number, and registered address will be published here and in the Google Play listing, as
+      Google Play's developer-verification rules require.</p>
+
+      <div class="section-title">13. Google Play Data Safety</div>
+      <p>The answers given in the Play Console Data Safety form mirror this notice: in the
+      standard build, no data is collected or shared by the developer, all data stays on the
+      device, and the user can request deletion. If cloud sync is enabled in a published build,
+      that form will be updated the same day to declare the data types collected, that they are
+      transmitted over HTTPS, and that deletion can be requested — Google checks the form against
+      the app's actual behaviour, and a mismatch is a policy violation.</p>
+
+    </div>
+  </div>
+</div>
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/nav.js"></script>
+<script>renderSidebar('');</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

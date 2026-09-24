@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin control centre · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/hse-dashboard.css">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="description" content="Owner control centre: HSE statistics analytics, report reconciliation, action planning and subscription management.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<script src="js/auth.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/app-version.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>Admin control centre</h2>
+        <div class="crumb" id="periodCrumb">HSE performance analytics, reconciliation and account control</div>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn no-print" id="btnPrint">Print / PDF</button>
+        <a class="btn" href="index.html">Back to app</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="tabs no-print" role="tablist" id="tabBar">
+        <button class="tab" role="tab" data-panel="overview" aria-selected="true">Overview</button>
+        <button class="tab" role="tab" data-panel="analytics" aria-selected="false">HSE analytics</button>
+        <button class="tab" role="tab" data-panel="compare" aria-selected="false">Compliance &amp; gaps<span class="tab-count" id="cntGaps">0</span></button>
+        <button class="tab" role="tab" data-panel="actions" aria-selected="false">Action plan<span class="tab-count" id="cntActions">0</span></button>
+        <button class="tab" role="tab" data-panel="ai" aria-selected="false">AI analyst</button>
+        <button class="tab" role="tab" data-panel="reports" aria-selected="false">Reports</button>
+        <button class="tab" role="tab" data-panel="users" aria-selected="false">Users &amp; access</button>
+        <button class="tab" role="tab" data-panel="settings" aria-selected="false">Targets &amp; settings</button>
+      </div>
+
+      <!-- ============================ OVERVIEW ============================ -->
+      <section class="tab-panel" id="panel-overview" role="tabpanel">
+        <div id="ownerBanner"></div>
+        <div class="section-title">Portal at a glance</div>
+        <div class="tile-grid" id="portalTiles"></div>
+
+        <div class="section-title">HSE reporting period</div>
+        <div id="overviewPeriod"></div>
+
+        <div class="section-title">Quick actions</div>
+        <div class="card">
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn btn-primary" data-goto="analytics">Upload monthly reports</button>
+            <button class="btn" data-goto="compare">Review gaps</button>
+            <button class="btn" data-goto="actions">Open the action plan</button>
+            <button class="btn" data-goto="ai">Ask the analyst</button>
+            <button class="btn" data-goto="reports">Generate a report</button>
+            <button class="btn" data-goto="users">Manage subscriptions</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== ANALYTICS ============================ -->
+      <section class="tab-panel" id="panel-analytics" role="tabpanel" hidden>
+        <p class="section-note">
+          Upload the monthly <strong>TAQA SWS HSE Statistics</strong> return (Form F-019-F / 3.1-A / 3.1-B) and, optionally,
+          the matching <strong>internal HEGC monthly report</strong> (HEGC-IMS-P06-FM-03 / 03A). Both are read entirely in
+          this browser — nothing is uploaded to a server. With both files loaded, the dashboard reconciles one against the other.
+        </p>
+
+        <div class="upload-grid">
+          <div class="drop" id="dropTaqa" data-kind="taqa">
+            <h4>TAQA client submission</h4>
+            <div class="drop-hint">SWS HSE Statistics Performance Report — the file sent to the client.</div>
+            <button class="btn btn-sm" type="button" data-pick="taqa">Choose .xlsx file</button>
+            <input type="file" accept=".xlsx" data-input="taqa">
+            <div class="drop-file" data-file="taqa"></div>
+          </div>
+          <div class="drop" id="dropInternal" data-kind="internal">
+            <h4>Internal monthly report</h4>
+            <div class="drop-hint">HEGC monthly OHS &amp; Environmental performance report — your own record.</div>
+            <button class="btn btn-sm" type="button" data-pick="internal">Choose .xlsx file</button>
+            <input type="file" accept=".xlsx" data-input="internal">
+            <div class="drop-file" data-file="internal"></div>
+          </div>
+        </div>
+
+        <div class="toolbar no-print" style="margin-top:14px;">
+          <button class="btn btn-sm" id="btnClearFiles">Clear loaded files</button>
+          <div class="spacer"></div>
+          <label class="party-picker">
+            <span>Compare TAQA line</span>
+            <select id="partySelect">
+              <option value="contractor">Contractor (recommended)</option>
+              <option value="total">Total (all parties)</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="analyticsBody" hidden>
+          <div class="section-title">Headline</div>
+          <div id="heroBlock"></div>
+
+          <div class="section-title">This month</div>
+          <div class="tile-grid" id="kpiTiles"></div>
+
+          <div class="section-title">Exposure and incident performance</div>
+          <div class="chart-grid cols-2">
+            <div id="chartManhours"></div>
+            <div id="chartWorkforce"></div>
+          </div>
+
+          <div class="section-title">Leading indicators</div>
+          <div class="chart-grid cols-2" style="margin-bottom:16px;">
+            <div id="chartLeading"></div>
+            <div id="chartNearMiss"></div>
+          </div>
+          <div id="chartLeadingHeat"></div>
+
+          <div class="section-title">Permits to work</div>
+          <div class="chart-grid cols-2">
+            <div id="chartPermitMix"></div>
+            <div id="chartPermitTrend"></div>
+          </div>
+
+          <div class="section-title">Training</div>
+          <div class="chart-grid cols-2">
+            <div id="chartTraining"></div>
+            <div id="chartTrainingSessions"></div>
+          </div>
+
+          <div class="section-title">Environment</div>
+          <div class="chart-grid cols-2">
+            <div id="chartEnergy"></div>
+            <div id="chartWater"></div>
+          </div>
+
+          <div class="section-title">Reported by party</div>
+          <div id="chartParty"></div>
+
+          <div class="section-title">Source records</div>
+          <div id="sourceInfo"></div>
+        </div>
+
+        <div id="analyticsEmpty" class="card empty-state">
+          <div class="icon">📈</div>
+          Load a TAQA statistics workbook above to build the dashboard.
+        </div>
+      </section>
+
+      <!-- ============================ COMPARE ============================= -->
+      <section class="tab-panel" id="panel-compare" role="tabpanel" hidden>
+        <div id="compareEmpty" class="card empty-state">
+          <div class="icon">⚖️</div>
+          Load <strong>both</strong> the TAQA submission and the internal report to reconcile them.
+        </div>
+        <div id="compareBody" hidden>
+          <div class="section-title">Where the two reports disagree</div>
+          <div id="chartVariance"></div>
+
+          <div class="section-title">Target attainment</div>
+          <div id="chartTargets"></div>
+
+          <div class="section-title">Leading-indicator profile</div>
+          <div class="chart-grid cols-2">
+            <div id="chartRadar"></div>
+            <div id="scorecardCard"></div>
+          </div>
+
+          <div class="section-title">All findings</div>
+          <div class="filter-row no-print">
+            <select id="findingType">
+              <option value="">Every kind of finding</option>
+              <option value="reconciliation">Reconciliation</option>
+              <option value="coverage">Not on the TAQA form</option>
+              <option value="target">Target attainment</option>
+              <option value="trend">Trends</option>
+              <option value="quality">Data quality</option>
+            </select>
+            <select id="findingSeverity">
+              <option value="">Every severity</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="info">Compliant / informational</option>
+            </select>
+            <input type="search" id="findingSearch" placeholder="Search findings…">
+            <div class="spacer"></div>
+            <span class="hint" id="findingCount"></span>
+          </div>
+          <div class="card" id="findingList"></div>
+        </div>
+      </section>
+
+      <!-- ============================ ACTIONS ============================= -->
+      <section class="tab-panel" id="panel-actions" role="tabpanel" hidden>
+        <div id="actionsEmpty" class="card empty-state">
+          <div class="icon">🗓️</div>
+          Load a report to generate the action plan.
+        </div>
+        <div id="actionsBody" hidden>
+          <p class="section-note">
+            Every action below comes from a finding on the Compliance &amp; gaps tab. Due dates are calculated from the
+            severity of the finding using the response times on the Targets &amp; settings tab, counted from today.
+            Owners are <em>roles</em> — assign the names yourself.
+          </p>
+          <div class="tile-grid" id="actionTiles" style="margin-bottom:20px;"></div>
+          <div class="filter-row no-print">
+            <select id="actionPriority">
+              <option value="">Every priority</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <select id="actionOwner"><option value="">Every owner</option></select>
+            <div class="spacer"></div>
+            <button class="btn btn-sm" id="btnCopyActions">Copy as text</button>
+            <button class="btn btn-sm" id="btnCsvActions">Download CSV</button>
+          </div>
+          <div id="actionList"></div>
+        </div>
+      </section>
+
+      <!-- =============================== AI =============================== -->
+      <section class="tab-panel" id="panel-ai" role="tabpanel" hidden>
+        <div class="ai-wrap">
+          <div>
+            <div class="ai-thread" id="aiThread"></div>
+            <form class="ai-ask no-print" id="aiForm">
+              <input type="text" id="aiInput" placeholder="Ask about the data — e.g. “where are we lagging?”" autocomplete="off">
+              <button class="btn btn-primary" type="submit">Ask</button>
+            </form>
+            <div class="ai-chips no-print" id="aiChips"></div>
+          </div>
+          <div class="ai-side">
+            <div class="card">
+              <div class="section-title" style="margin-top:0;">Local model</div>
+              <div class="ai-status" id="aiStatus"></div>
+              <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-sm" id="btnAiDetect">Detect</button>
+                <button class="btn btn-sm" data-goto="settings">Configure</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="section-title" style="margin-top:0;">What it can answer</div>
+              <div class="hint" style="line-height:1.6;">
+                Any KPI in either report, for a month, a quarter or the year; comparisons between the two reports;
+                trends; where you are lagging; and what to do next. Every figure it quotes is read from the
+                workbooks you loaded.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ REPORTS ============================= -->
+      <section class="tab-panel" id="panel-reports" role="tabpanel" hidden>
+        <div id="reportsEmpty" class="card empty-state">
+          <div class="icon">📄</div>
+          Load a report to generate documents from it.
+        </div>
+        <div id="reportsBody" hidden>
+          <div class="filter-row no-print">
+            <select id="reportKind"></select>
+            <button class="btn btn-primary btn-sm" id="btnBuildReport">Generate</button>
+            <div class="spacer"></div>
+            <button class="btn btn-sm" id="btnCopyReport">Copy</button>
+            <button class="btn btn-sm" id="btnDownloadReport">Download .md</button>
+            <button class="btn btn-sm" id="btnPrintReport">Print / PDF</button>
+          </div>
+          <div class="report-pane" id="reportPane"></div>
+        </div>
+      </section>
+
+      <!-- ============================= USERS ============================== -->
+      <section class="tab-panel" id="panel-users" role="tabpanel" hidden>
+        <div id="adminGate"></div>
+        <div id="adminBody" hidden>
+          <div class="toolbar">
+            <input type="search" id="adminSearch" placeholder="Search email / uid / status…">
+            <div class="spacer"></div>
+            <button class="btn" id="adminRefresh">Refresh</button>
+          </div>
+          <div id="adminResult"></div>
+          <div id="adminTable"></div>
+        </div>
+      </section>
+
+      <!-- ============================ SETTINGS ============================ -->
+      <section class="tab-panel" id="panel-settings" role="tabpanel" hidden>
+        <div class="section-title">Performance targets</div>
+        <p class="section-note">
+          These are <strong>house targets</strong> used by this dashboard to judge performance. They are not regulatory
+          thresholds and nothing here cites one. Replace them with the figures your project HSE plan actually commits to —
+          the compliance scoring, the findings and the action plan all follow whatever you set.
+        </p>
+        <div class="card" id="targetEditor"></div>
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn btn-primary" id="btnSaveTargets">Save targets</button>
+          <button class="btn" id="btnResetTargets">Restore defaults</button>
+          <span class="hint" id="targetSaveMsg"></span>
+        </div>
+
+        <div class="section-title">Action response times</div>
+        <p class="section-note">How many days an action gets, by the severity of the finding that raised it.</p>
+        <div class="card" id="slaEditor"></div>
+
+        <div class="section-title">Local AI analyst</div>
+        <p class="section-note">
+          The analyst works with no setup — the built-in engine answers from the parsed data and never needs a network.
+          Optionally point it at a model server running <strong>on this machine</strong> (Ollama, LM Studio, llama.cpp) for
+          free-form phrasing and longer-form writing. Nothing is sent anywhere else, and there is no cloud fallback.
+        </p>
+        <div class="card" id="llmEditor"></div>
+      </section>
+
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/nav.js"></script>
+<script>renderSidebar(''); renderFooter('app-footer');</script>
+<script src="js/xlsx-reader.js"></script>
+<script src="js/hse-parser.js"></script>
+<script src="js/hse-kpi.js"></script>
+<script src="js/hse-analysis.js"></script>
+<script src="js/hse-charts.js"></script>
+<script src="js/hse-ai.js"></script>
+<script src="js/admin.js"></script>
+<script src="js/admin-dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/auth.js"></script>
+<script src="js/consent.js"></script>
+<script>requireConsent();</script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Equipment Checklist · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&family=Noto+Nastaliq+Urdu:wght@400;700&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Monthly inspection and maintenance checklist for earthmoving machinery and cranes, in English, Arabic, Urdu and Hindi, with month colour coding and email forwarding.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2 data-i18n="page.checklist.title">Monthly equipment checklist</h2>
+        <div class="crumb" data-i18n="page.checklist.crumb"></div>
+      </div>
+      <div>
+        <a class="btn" href="checklists.html" data-i18n="btn.records">Checklist records</a>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <div id="langSwitch"></div>
+
+      <div class="banner banner-warn">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <div>
+          <strong data-i18n="disc.title"></strong>
+          <span data-i18n="disc.body"></span>
+          <br><em style="font-size:12px;" data-i18n="disc.translation"></em>
+        </div>
+      </div>
+
+      <!-- ===================== Equipment details ===================== -->
+      <div class="section-title" data-i18n="sec.equipment">Equipment details</div>
+      <div class="card">
+        <div class="form-grid">
+          <div class="field">
+            <label for="equipmentType" data-i18n="f.equipmentType"></label>
+            <select id="equipmentType"></select>
+          </div>
+          <div class="field">
+            <label for="assetNo" data-i18n="f.assetNo"></label>
+            <input type="text" id="assetNo" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="make" data-i18n="f.make"></label>
+            <input type="text" id="make" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="model" data-i18n="f.model"></label>
+            <input type="text" id="model" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="serial" data-i18n="f.serial"></label>
+            <input type="text" id="serial" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="plateNo" data-i18n="f.plateNo"></label>
+            <input type="text" id="plateNo" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="capacity" data-i18n="f.capacity"></label>
+            <input type="text" id="capacity" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="hourMeter" data-i18n="f.hourMeter"></label>
+            <input type="text" id="hourMeter" inputmode="numeric" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="odometer" data-i18n="f.odometer"></label>
+            <input type="text" id="odometer" inputmode="numeric" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="operator" data-i18n="f.operator"></label>
+            <input type="text" id="operator" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="location" data-i18n="f.location"></label>
+            <input type="text" id="location" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="project" data-i18n="f.project"></label>
+            <input type="text" id="project" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="contractor" data-i18n="f.contractor"></label>
+            <input type="text" id="contractor" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="month" data-i18n="f.month"></label>
+            <input type="month" id="month">
+          </div>
+          <div class="field">
+            <label for="inspectionDate" data-i18n="f.inspectionDate"></label>
+            <input type="date" id="inspectionDate">
+          </div>
+          <div class="field">
+            <label for="nextDue" data-i18n="f.nextDue"></label>
+            <input type="date" id="nextDue">
+          </div>
+        </div>
+      </div>
+
+      <!-- ===================== Colour code ===================== -->
+      <div class="section-title" data-i18n="sec.colour">Colour code</div>
+      <div class="card">
+        <div class="colour-code-row">
+          <div class="colour-swatch" id="colourSwatch">—</div>
+          <div class="colour-meta">
+            <div class="colour-label" data-i18n="c.monthCode"></div>
+            <div class="colour-name num" id="colourName">—</div>
+          </div>
+          <div class="field colour-scheme-field">
+            <label for="colourScheme" data-i18n="c.scheme"></label>
+            <select id="colourScheme"></select>
+          </div>
+        </div>
+        <label class="check-row" style="margin-top:12px;">
+          <input type="checkbox" id="tagFitted">
+          <span data-i18n="c.tagFitted"></span>
+        </label>
+        <p class="hint" style="margin-bottom:0;" data-i18n="c.explain"></p>
+      </div>
+
+      <!-- ===================== Running summary ===================== -->
+      <div class="chk-summary card" id="chkSummary">
+        <div class="chk-summary-title" data-i18n="sum.title"></div>
+        <div class="chk-summary-stats">
+          <div class="chk-stat"><span class="n num" id="sumTotal">0</span><span class="k" data-i18n="sum.total"></span></div>
+          <div class="chk-stat ok"><span class="n num" id="sumOk">0</span><span class="k" data-i18n="sum.ok"></span></div>
+          <div class="chk-stat monitor"><span class="n num" id="sumMonitor">0</span><span class="k" data-i18n="sum.monitor"></span></div>
+          <div class="chk-stat defect"><span class="n num" id="sumDefect">0</span><span class="k" data-i18n="sum.defect"></span></div>
+          <div class="chk-stat na"><span class="n num" id="sumNa">0</span><span class="k" data-i18n="sum.na"></span></div>
+        </div>
+        <div class="util-bar-track"><div class="util-bar-fill" id="sumProgressFill" style="width:0%; background:var(--navy-700);"></div></div>
+        <div class="hint num" id="sumProgressText">0 / 0</div>
+        <div class="chk-summary-actions no-print">
+          <button class="btn btn-sm" id="btnMarkAllOk" data-i18n="btn.markAllOk"></button>
+          <button class="btn btn-sm" id="btnClearAll" data-i18n="btn.clearAll"></button>
+        </div>
+      </div>
+
+      <!-- ===================== The checklist ===================== -->
+      <div id="checklistSections"></div>
+
+      <!-- ===================== Third-party certificates ===================== -->
+      <div class="section-title" data-i18n="sec.certificates">Third-party certificates &amp; competency records</div>
+      <div class="card certificate-manager-card">
+        <div class="certificate-toolbar no-print">
+          <div class="certificate-summary" id="certificateSummary">0</div>
+          <div class="certificate-toolbar-actions">
+            <button class="btn btn-sm" id="btnAddEquipmentCert" data-i18n="cert.addEquipment">+ Equipment certificate</button>
+            <button class="btn btn-sm" id="btnAddPersonnelCert" data-i18n="cert.addPersonnel">+ Personnel certificate</button>
+            <button class="btn btn-sm" id="btnAddAccessoryCert" data-i18n="cert.addAccessory">+ Accessory certificate</button>
+            <button class="btn btn-sm btn-primary" id="btnShareCertificates" data-i18n="cert.shareReport">Share report (Email / WhatsApp)</button>
+          </div>
+        </div>
+        <div class="banner banner-info" style="margin-top:12px;">
+          <div data-i18n="cert.registerInfo"></div>
+        </div>
+        <div id="certificateRows" class="certificate-list"></div>
+        <div id="certificateReport" class="certificate-report"></div>
+      </div>
+
+      <!-- ===================== Verdict ===================== -->
+      <div class="section-title" data-i18n="sec.verdict">Overall result</div>
+      <div class="card">
+        <input type="hidden" id="verdictOverridden" value="">
+        <div class="verdict-options">
+          <label class="verdict-opt v-fit">
+            <input type="radio" name="verdict" value="fit" checked>
+            <span data-i18n="v.fit"></span>
+          </label>
+          <label class="verdict-opt v-conditional">
+            <input type="radio" name="verdict" value="conditional">
+            <span data-i18n="v.conditional"></span>
+          </label>
+          <label class="verdict-opt v-unfit">
+            <input type="radio" name="verdict" value="unfit">
+            <span data-i18n="v.unfit"></span>
+          </label>
+        </div>
+        <p class="hint" style="margin-bottom:0;">
+          <span data-i18n="v.autoNote"></span>
+          <strong class="num" id="verdictSuggestion"></strong>
+        </p>
+      </div>
+
+      <!-- ===================== Sign-off ===================== -->
+      <div class="section-title"><span data-i18n="f.inspector"></span></div>
+      <div class="card">
+        <div class="form-grid">
+          <div class="field">
+            <label for="inspector" data-i18n="f.inspector"></label>
+            <input type="text" id="inspector" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="inspectorId" data-i18n="f.inspectorId"></label>
+            <input type="text" id="inspectorId" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="supervisor" data-i18n="f.supervisor"></label>
+            <input type="text" id="supervisor" autocomplete="off">
+          </div>
+          <div class="field full">
+            <label for="remarks" data-i18n="f.remarks"></label>
+            <textarea id="remarks" rows="3"></textarea>
+          </div>
+        </div>
+
+        <div class="sig-grid">
+          <div class="sig-pad-wrap">
+            <div class="sig-caption" data-i18n="f.inspector"></div>
+            <canvas class="sig-pad" id="sigInspectorPad" width="300" height="110"></canvas>
+            <div class="sig-controls no-print">
+              <button class="btn btn-sm" type="button" data-clear-sig="sigInspectorPad">✕</button>
+            </div>
+          </div>
+          <div class="sig-pad-wrap">
+            <div class="sig-caption" data-i18n="f.supervisor"></div>
+            <canvas class="sig-pad" id="sigSupervisorPad" width="300" height="110"></canvas>
+            <div class="sig-controls no-print">
+              <button class="btn btn-sm" type="button" data-clear-sig="sigSupervisorPad">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="saveConfirm"></div>
+
+      <div class="chk-actions no-print">
+        <button class="btn btn-primary" id="btnSave" data-i18n="btn.save"></button>
+        <button class="btn" id="btnEmail" data-i18n="btn.email"></button>
+        <button class="btn" id="btnPrint" data-i18n="btn.print"></button>
+      </div>
+
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== Email modal ===================== -->
+<div class="modal-backdrop no-print" id="emailModal" hidden>
+  <div class="modal" style="max-width:760px;">
+    <div class="modal-head">
+      <strong data-i18n="em.title"></strong>
+      <button class="close-x" id="emClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="banner banner-info"><div data-i18n="em.note"></div></div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="emFrom" data-i18n="em.from"></label>
+          <input type="email" id="emFrom" autocomplete="email" placeholder="name@company.ae">
+        </div>
+        <div class="field">
+          <label for="emCc" data-i18n="em.cc"></label>
+          <input type="text" id="emCc" autocomplete="off" placeholder="a@b.com; c@d.com">
+        </div>
+        <div class="field full">
+          <label for="emTo" data-i18n="em.to"></label>
+          <input type="text" id="emTo" autocomplete="off" placeholder="a@b.com; c@d.com">
+          <span class="hint" data-i18n="em.multiHint"></span>
+        </div>
+        <div class="field full">
+          <label for="emSubject" data-i18n="em.subject"></label>
+          <input type="text" id="emSubject">
+        </div>
+        <div class="field full">
+          <label for="emBody" data-i18n="em.body"></label>
+          <textarea id="emBody" rows="14" style="font-family:var(--font-mono); font-size:12.5px;"></textarea>
+          <span class="hint" data-i18n="em.attachNote"></span>
+        </div>
+      </div>
+
+      <div id="emResult" style="margin-top:12px;"></div>
+    </div>
+    <div class="modal-foot" style="flex-wrap:wrap;">
+      <button class="btn btn-sm" id="emRegenerate" data-i18n="em.regenerate"></button>
+      <button class="btn btn-sm" id="emCopy" data-i18n="em.copy"></button>
+      <button class="btn btn-sm" id="emOpenClient" data-i18n="em.openClient"></button>
+      <button class="btn btn-sm btn-primary" id="emDownload" data-i18n="em.download"></button>
+      <button class="btn btn-sm" id="emCancel" data-i18n="btn.close"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal host for the certificate editor and photo lightbox. Without this,
+     openCertificateEditor() in js/checklist.js falls back to document.body and
+     wipes the whole page when the modal is closed. -->
+<div id="lightboxRoot"></div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/cloud-sync.js"></script>
+<script src="js/nav.js"></script>
+<script src="js/signature-pad.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/checklist-data.js"></script>
+<script src="js/mailer.js"></script>
+<script src="js/photo.js"></script>
+<script src="js/certificate-storage.js"></script>
+<script src="js/certificate-report.js"></script>
+<script>
+renderSidebar('checklist');
+renderFooter('app-footer');
+</script>
+<script src="js/checklist.js"></script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

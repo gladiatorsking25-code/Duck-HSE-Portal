@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#16283a">
+<title>Offline · Duck HSE Portal</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="offline-shell">
+  <div class="offline-card">
+    <img class="mark" src="assets/icons/icon-192.png" alt="">
+    <h2 style="margin:0 0 8px;">This page isn't available offline yet</h2>
+    <p style="color:var(--ink-soft); font-size:13.5px; line-height:1.6;">
+      Your saved assessments and permits are safe — they're stored on this device, not on a
+      server, so nothing has been lost. This particular page just hasn't been downloaded for
+      offline use yet.
+    </p>
+    <p style="color:var(--ink-soft); font-size:13.5px; line-height:1.6;">
+      Reconnect once and the app will keep working offline from then on.
+    </p>
+    <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:18px;">
+      <button class="btn btn-primary" onclick="location.reload();">Try again</button>
+      <a class="btn" href="index.html">Go to dashboard</a>
+    </div>
+    <p class="hint" id="netState" style="margin-top:16px;"></p>
+  </div>
+</div>
+<script>
+function paintState() {
+  document.getElementById('netState').textContent =
+    navigator.onLine ? 'Connection detected — try again.' : 'No connection detected.';
+}
+window.addEventListener('online', () => { paintState(); location.reload(); });
+window.addEventListener('offline', paintState);
+paintState();
+</script>
+</body>
+</html>

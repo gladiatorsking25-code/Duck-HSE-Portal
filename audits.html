@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/auth.js"></script>
+<script src="js/consent.js"></script>
+<script>requireConsent();</script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HSE audit preparation · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/audit.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Prepare HSE audit evidence packs per ADOSH-SF Technical Guideline 15 and TAQA WS SOPs, for contractors and consultants.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>HSE audit preparation</h2>
+        <div class="crumb">ADOSH-SF Technical Guideline 15 · TAQA WS SOPs</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn" type="button" id="btnOpenPack">Open a pack (.zip)</button>
+        <button class="btn btn-primary" type="button" id="btnNew">+ New audit</button>
+        <input type="file" id="packInput" accept=".zip,application/zip" hidden>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="role-intro">
+        <div class="role-card role-contractor">
+          <div class="role-tag">Contractor</div>
+          <p>Gather <strong>implementation evidence</strong>: your OSHMS against every ADOSH-SF element, and proof that each TAQA WS SOP is being executed on site — permits, inspections, certificates, training.</p>
+        </div>
+        <div class="role-card role-consultant">
+          <div class="role-tag">Consultant</div>
+          <p>Gather <strong>supervision evidence</strong>: your own OSHMS, plus proof you reviewed, approved and monitored the contractor — the duty every TAQA WS SOP assigns to the consultant.</p>
+        </div>
+      </div>
+
+      <p class="section-note">
+        Each checklist point has a serial number and its own upload. Attach the documents as you find them, mark each point's
+        status, then compile the whole pack into one <strong>.zip</strong> — one folder per S/No., an index page linking every file,
+        and a CSV for Excel — and upload it to <strong>Project Number / HSE Audit</strong> on Google Drive.
+        Evidence is kept on this device until you do.
+      </p>
+
+      <div class="toolbar">
+        <input type="search" id="auditSearch" placeholder="Search project, title, company…">
+        <select id="auditRole">
+          <option value="">Contractor &amp; consultant</option>
+          <option value="contractor">Contractor</option>
+          <option value="consultant">Consultant</option>
+        </select>
+        <div class="spacer"></div>
+        <span class="hint" id="storageNote"></span>
+      </div>
+      <div id="auditList"></div>
+
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ New audit ============================ -->
+<div class="modal-backdrop" id="newModal" hidden>
+  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="newTitle">
+    <div class="modal-head"><h3 id="newTitle" style="margin:0;">New audit</h3><button class="close-x" type="button" data-close>×</button></div>
+    <form class="modal-body" id="newForm">
+      <div class="field full">
+        <label>Prepare as</label>
+        <div class="role-pick">
+          <label class="role-opt"><input type="radio" name="role" value="contractor" checked>
+            <span><strong>Contractor</strong><small>Implementation evidence</small></span></label>
+          <label class="role-opt"><input type="radio" name="role" value="consultant">
+            <span><strong>Consultant</strong><small>Review, approval &amp; monitoring evidence</small></span></label>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="fProjectNo">Project / contract number *</label>
+          <input type="text" id="fProjectNo" required placeholder="e.g. O-16123">
+          <span class="hint">Names the Drive folder and the pack.</span>
+        </div>
+        <div class="field">
+          <label for="fAuditDate">Audit date</label>
+          <input type="date" id="fAuditDate">
+        </div>
+        <div class="field full">
+          <label for="fProjectTitle">Project title</label>
+          <input type="text" id="fProjectTitle" placeholder="e.g. Construction of House Connections … Part 2">
+        </div>
+        <div class="field">
+          <label for="fCompany">Your company (auditee)</label>
+          <input type="text" id="fCompany" placeholder="e.g. Hydropower Energy and General Construction LLC">
+        </div>
+        <div class="field">
+          <label for="fClient">Client</label>
+          <input type="text" id="fClient" value="TAQA Water Solutions">
+        </div>
+        <div class="field">
+          <label for="fAuditType">Audit type</label>
+          <select id="fAuditType">
+            <option>TAQA WS OHSE audit on service provider (SOP-3546)</option>
+            <option>ADOSH-SF third-party audit</option>
+            <option>Internal OSHMS audit</option>
+            <option>Pre-audit readiness review</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="fAuditors">Auditor(s)</label>
+          <input type="text" id="fAuditors" placeholder="Names / organisation">
+        </div>
+        <div class="field full">
+          <label for="fPreparedBy">Prepared by</label>
+          <input type="text" id="fPreparedBy" placeholder="Name and designation">
+        </div>
+      </div>
+
+      <div class="field full" style="margin-top:18px;">
+        <div class="scope-head">
+          <label>TAQA WS SOPs in scope <span class="hint" id="scopeCount"></span></label>
+          <span class="scope-tools"><button type="button" class="linklike" id="scopeDefault">Defaults</button> ·
+            <button type="button" class="linklike" id="scopeAll">All</button> ·
+            <button type="button" class="linklike" id="scopeNone">None</button></span>
+        </div>
+        <div class="scope-grid" id="scopeGrid"></div>
+        <span class="hint">Defaults suit an excavation-led water / wastewater network contract. Switch on specialist SOPs (asbestos / AC pipes, piling, tunnelling…) only where that work happens. You can add more later.</span>
+      </div>
+
+      <label class="check-line"><input type="checkbox" id="fShrink" checked>
+        Shrink large photos (longest edge 2000 px) — keeps the pack small enough to upload from site</label>
+    </form>
+    <div class="modal-foot">
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit" form="newForm">Create checklist</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ Pack preview ============================ -->
+<div class="modal-backdrop" id="packModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="packTitle">
+    <div class="modal-head"><h3 id="packTitle" style="margin:0;">Evidence pack</h3><button class="close-x" type="button" data-close>×</button></div>
+    <div class="modal-body" id="packBody"></div>
+    <div class="modal-foot">
+      <button class="btn" type="button" data-close>Close</button>
+      <button class="btn" type="button" id="btnPackView">View files</button>
+      <button class="btn btn-primary" type="button" id="btnPackImport">Import to this device</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/cloud-sync.js"></script>
+<script src="js/nav.js"></script>
+<script>renderSidebar('audits'); renderFooter('app-footer');</script>
+<script src="js/xlsx-reader.js"></script>
+<script src="js/zip-writer.js"></script>
+<script src="js/audit-checklists.js"></script>
+<script src="js/audit-store.js"></script>
+<script src="js/audit-pack.js"></script>
+<script src="js/audit-viewer.js"></script>
+<script src="js/audits.js"></script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

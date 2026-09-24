@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/auth.js"></script>
+<script src="js/consent.js"></script>
+<script>requireConsent();</script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crane Selector · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>Crane selector</h2>
+        <div class="crumb">Find the safest, most cost-efficient crane in the fleet for a given lift</div>
+      </div>
+      <a class="btn" href="assessment.html">Go to full assessment</a>
+    </div>
+
+    <div class="content">
+      <div id="disclaimer-banner"></div>
+
+      <div class="card">
+        <div class="section-title" style="margin-top:0;">Lift requirement</div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="selLoad">Load weight</label>
+            <div class="input-suffix"><input type="number" id="selLoad" min="0" step="0.1" placeholder="e.g. 8.5"><span>tonnes</span></div>
+          </div>
+          <div class="field">
+            <label for="selRadius">Maximum working radius</label>
+            <div class="input-suffix"><input type="number" id="selRadius" min="0" step="0.1" placeholder="e.g. 10"><span>metres</span></div>
+            <span class="hint">The furthest the load needs to reach from the crane's centre of rotation.</span>
+          </div>
+          <div class="field">
+            <label for="selMaxBoom">Preferred maximum boom length (optional)</label>
+            <div class="input-suffix"><input type="number" id="selMaxBoom" min="0" step="0.1" placeholder="no limit"><span>metres</span></div>
+          </div>
+        </div>
+        <div style="margin-top:16px; display:flex; gap:10px;">
+          <button class="btn btn-primary" id="btnFind">Find suitable cranes</button>
+          <button class="btn" id="btnClear">Clear</button>
+        </div>
+      </div>
+
+      <div id="selectorResults"></div>
+
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/cloud-sync.js"></script>
+<script src="js/nav.js"></script>
+<script src="js/crane-selector.js"></script>
+<script>
+renderSidebar('selector');
+renderDisclaimer('disclaimer-banner');
+renderFooter('app-footer');
+
+const selLoad = document.getElementById('selLoad');
+const selRadius = document.getElementById('selRadius');
+const selMaxBoom = document.getElementById('selMaxBoom');
+const resultsEl = document.getElementById('selectorResults');
+
+function configLabel(name) {
+  return name.length > 46 ? name.slice(0, 44) + '…' : name;
+}
+
+function utilBadge(u) {
+  if (u > 100) return '<span class="badge badge-fail"><span class="badge-dot"></span>Over capacity</span>';
+  if (u > 85) return '<span class="badge badge-warn"><span class="badge-dot"></span>Tight — ' + u.toFixed(0) + '%</span>';
+  return '<span class="badge badge-ok"><span class="badge-dot"></span>' + u.toFixed(0) + '% used</span>';
+}
+
+document.getElementById('btnFind').addEventListener('click', () => {
+  const load = parseFloat(selLoad.value);
+  const radius = parseFloat(selRadius.value);
+  const maxBoom = parseFloat(selMaxBoom.value);
+
+  if (isNaN(load) || load <= 0 || isNaN(radius) || radius <= 0) {
+    resultsEl.innerHTML = `<div class="banner banner-warn" style="margin-top:16px;">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <div>Enter a valid load weight and working radius.</div>
+    </div>`;
+    return;
+  }
+
+  const opts = { maxBoomLength: isNaN(maxBoom) ? null : maxBoom };
+  const matches = CraneSelector.findOptions(load, radius, opts);
+
+  if (!matches.length) {
+    const best = CraneSelector.bestEffort(radius, opts);
+    resultsEl.innerHTML = `
+      <div class="banner banner-danger" style="margin-top:16px;">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <div>No crane/configuration currently on file can lift ${load.toFixed(1)} t at ${radius.toFixed(1)} m radius${opts.maxBoomLength ? ` within a ${opts.maxBoomLength} m boom limit` : ''}.
+        ${best ? `The largest capacity available in the fleet at this radius is <strong>${best.capacity.toFixed(2)} t</strong>, using the <strong>${best.craneModel}</strong> (${configLabel(best.configuration)}, ${best.boomLength} m boom).` : 'No configuration in the fleet reaches this radius at all.'}
+        Consider a larger crane, a shorter radius, or check Fleet &amp; Backup for other available equipment.</div>
+      </div>`;
+    return;
+  }
+
+  resultsEl.innerHTML = `
+    <div class="card" style="margin-top:16px;">
+      <div class="section-title" style="margin-top:0;">Suitable cranes for ${load.toFixed(1)} t at ${radius.toFixed(1)} m radius</div>
+      <p class="hint" style="margin-top:-6px;">Ranked by a cost-efficiency proxy — smallest adequate crane class, then shortest boom, then best use of that crane's capacity. This is a planning heuristic, not real pricing: it does not know your actual rental rates, mobilization distance, or availability. Confirm commercial cost and availability with your crane supplier, and always verify the final pick with a full lift assessment before use.</p>
+      <table class="data-table">
+        <thead><tr><th></th><th>Crane model</th><th>Configuration</th><th>Boom (m)</th><th>Capacity at radius (t)</th><th>Utilization</th><th>Wind limit</th><th></th></tr></thead>
+        <tbody>
+          ${matches.map((m, i) => `
+            <tr>
+              <td>${i === 0 ? '<span class="badge badge-ok"><span class="badge-dot"></span>Best fit</span>' : ''}</td>
+              <td>${m.craneModel} <span class="hint">(${m.craneMaxCapacity} t class)</span></td>
+              <td title="${m.configuration}">${configLabel(m.configuration)}</td>
+              <td class="num">${m.boomLength.toFixed(1)}</td>
+              <td class="num">${m.capacity.toFixed(2)}</td>
+              <td>${utilBadge(m.utilization)}</td>
+              <td class="num">${m.maxWindSpeed} m/s</td>
+              <td><a class="btn btn-sm" href="assessment.html?craneModel=${encodeURIComponent(m.craneModel)}&configuration=${encodeURIComponent(m.configuration)}&boomLength=${m.boomLength}&radius=${radius}&loadWeight=${load}">Start assessment</a></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+});
+
+document.getElementById('btnClear').addEventListener('click', () => {
+  selLoad.value = ''; selRadius.value = ''; selMaxBoom.value = '';
+  resultsEl.innerHTML = '';
+});
+</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "Bubblewrap configuration for packaging this site as a Trusted Web Activity.",
+    "Replace every HOST_DOMAIN placeholder with the domain the site is actually",
+    "served from, then run:  npx @bubblewrap/cli init --manifest ./twa-manifest.json",
+    "See PLAY_STORE_LAUNCH.md for the full walkthrough.",
+    "packageId and signingKey can never change once published — get them right first."
+  ],
+  "packageId": "Duck.HSE.Portal",
+  "host": "HOST_DOMAIN",
+  "name": "Duck HSE Portal",
+  "launcherName": "Duck HSE",
+  "display": "standalone",
+  "orientation": "any",
+  "themeColor": "#16283a",
+  "themeColorDark": "#0f1b26",
+  "navigationColor": "#16283a",
+  "navigationColorDark": "#0f1b26",
+  "navigationDividerColor": "#16283a",
+  "navigationDividerColorDark": "#0f1b26",
+  "backgroundColor": "#16283a",
+  "enableNotifications": false,
+  "startUrl": "/index.html",
+  "iconUrl": "https://HOST_DOMAIN/assets/icons/icon-512.png",
+  "maskableIconUrl": "https://HOST_DOMAIN/assets/icons/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "appVersionName": "1.7.1",
+  "appVersionCode": 14,
+  "shortcuts": [
+    {
+      "name": "New assessment",
+      "shortName": "Assess",
+      "url": "/assessment.html",
+      "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
+    },
+    {
+      "name": "New permit",
+      "shortName": "Permit",
+      "url": "/permit.html",
+      "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
+    },
+    {
+      "name": "History",
+      "shortName": "History",
+      "url": "/history.html",
+      "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://HOST_DOMAIN/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://HOST_DOMAIN/",
+  "minSdkVersion": 21,
+  "appVersion": "1.7.1",
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "android"
+  }
+}
