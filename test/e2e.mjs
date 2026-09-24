@@ -229,6 +229,18 @@ try {
   assert.match(await alice.textContent('#pageTitle'), new RegExp(`Confined space.*CSE-${year}-0001`, 'i'));
   step('Confined space permit: blocked by low oxygen, issued after a good reading');
 
+  // Printed, the gas table fits an A4 page instead of losing its right-hand columns.
+  await alice.emulateMedia({ media: 'print' });
+  await alice.setViewportSize({ width: 718, height: 1000 });
+  assert.ok(await alice.evaluate(() => {
+    const t = document.querySelector('.gas-table');
+    return t.getBoundingClientRect().right <= t.closest('.card, .content, main, body').getBoundingClientRect().right + 1;
+  }), 'gas table fits the printed page');
+  if (process.env.E2E_SHOTS) await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'permit-print.png'), fullPage: true });
+  await alice.emulateMedia({ media: 'screen' });
+  await alice.setViewportSize({ width: 1280, height: 720 });
+  step('The printed permit fits the gas table on the page');
+
   await alice.goto(BASE + 'permits.html');
   await alice.waitForSelector('#tableWrap tbody tr:nth-child(2)');
   assert.match(await alice.textContent('#tableWrap'), new RegExp(`CSE-${year}-0001[\\s\\S]*Confined space`, 'i'));
@@ -265,6 +277,25 @@ try {
   step('Permit list, dashboard and project show the permit type');
 
   const cseId = await alice.evaluate(() => DB.getPermits().find((p) => p.permitType === 'confined_space').id);
+  await alice.goto(BASE + 'permit.html?id=' + encodeURIComponent(cseId));
+  await alice.waitForSelector('#closeCard:not([hidden])');
+  // Unsaved edits are not thrown away by closing.
+  await alice.fill('#location', 'Tank T-4, Unit 2 (north manway)');
+  await alice.click('#btnClose');
+  await alice.waitForFunction(() => /not saved/.test(document.getElementById('closeErrors').textContent));
+  // A failed re-test is kept on the permit and suspends it.
+  await alice.click('#btnAddGas');
+  const retest = alice.locator('#gasRows tr').last();
+  await retest.locator('[data-k="point"]').fill('Bottom');
+  for (const [k, v] of [['o2', '20.9'], ['lel', '0'], ['h2s', '5'], ['co', '0'], ['testedBy', 'G. Tester'], ['instrument', 'GD-7']]) await retest.locator(`[data-k="${k}"]`).fill(v);
+  assert.match(await retest.locator('[data-result]').textContent(), /Outside limits[\s\S]*H₂S 5 ppm/);
+  await alice.click('#btnSave');
+  await alice.waitForURL(/mode=view/, { timeout: 15000 });
+  assert.match(await alice.textContent('#statusBanner'), /suspended/i);
+  assert.deepEqual(await alice.evaluate((id) => { const p = DB.getPermits().find((x) => x.id === id); return [p.status, p.gasTests.length, p.location]; }, cseId),
+    ['suspended', 2, 'Tank T-4, Unit 2 (north manway)']);
+  step('A failed gas re-test is saved and suspends the permit; unsaved edits block closing');
+
   await alice.goto(BASE + 'permit.html?id=' + encodeURIComponent(cseId));
   await alice.waitForSelector('#closeCard:not([hidden])');
   await alice.click('#btnClose');

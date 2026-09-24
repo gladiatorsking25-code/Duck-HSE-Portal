@@ -11,7 +11,7 @@
 
 const CONSENT_KEY = 'cla_tos_privacy_accepted_v1';
 // Bump when the Terms or Privacy Notice change, so everyone accepts them again.
-const CONSENT_VERSION = '2026-09-24';
+const CONSENT_VERSION = '2026-09-24.2';
 
 function hasAcceptedConsent() {
   try {

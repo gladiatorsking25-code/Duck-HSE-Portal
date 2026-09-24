@@ -71,7 +71,7 @@
 
   const HEIGHT_ACCESS = [
     'Fixed platform or roof with edge protection', 'Independent scaffold', 'Mobile scaffold tower',
-    'MEWP – scissor lift', 'MEWP – boom lift', 'Ladder or stepladder', 'Suspended platform or cradle',
+    'MEWP – scissor lift', 'MEWP – boom lift', 'Leaning ladder', 'Stepladder', 'Suspended platform or cradle',
     'Rope access', 'Other',
   ];
   const FALL_PROTECTION = [
@@ -113,11 +113,28 @@
 
   // Methods that only act on a control circuit, which is not isolation.
   const CONTROL_DEVICE = /\b(stop button|push ?button|e-?stop|emergency stop|selector|interlock|plc|vfd|drive stop|control switch)\b/i;
+  const ISOLATING_DEVICE = /\b(breaker|mcb|mccb|isolator|disconnect(or)?|switch-?disconnector|fuse|link|valve|blind|spade|racked)\b/i;
+  // A row isolated only at a control device. The method decides; the point
+  // name is used only when no method is given (a point may be "PLC panel").
+  function isControlOnly(r) {
+    const method = String(r.method || '');
+    const text = method.trim() ? method : String(r.point || '');
+    return CONTROL_DEVICE.test(text) && !ISOLATING_DEVICE.test(method);
+  }
 
   // True when any isolation point on the permit is electrical.
   function isElectrical(p) {
-    return (p && Array.isArray(p.isolations) ? p.isolations : []).some((r) => r && /Electrical|Back-feed/.test(r.energy || ''));
+    return (p && Array.isArray(p.isolations) ? p.isolations : []).some((r) => r && /electrical|back-feed/i.test(r.energy || ''));
   }
+
+  // "Other permits for this job" names a permit of the given type, by number
+  // prefix or by name ("CSE-2026-0004", "confined space permit to follow").
+  const LINK_PATTERNS = {
+    confined_space: /\bCSE\b|confined/i,
+    hot_work: /\bHW\b|hot work/i,
+    work_at_height: /\bWAH\b|height/i,
+  };
+  function linksPermit(p, key) { return LINK_PATTERNS[key].test(String((p && p.otherPermits) || '')); }
 
   // A precaution that becomes required only in some conditions, for example
   // flashback arrestors when gas cutting. The message uses the check's label.
@@ -199,7 +216,7 @@
       rules: [
         (p, h) => h.detail('fireDetection') === 'Sprinklers impaired'
           ? 'Hot work cannot go ahead while sprinklers in the area are impaired.' : null,
-        (p, h) => (h.detail('area') === 'Inside a confined space' && h.isBlank(p.otherPermits))
+        (p, h) => (h.detail('area') === 'Inside a confined space' && !linksPermit(p, 'confined_space'))
           ? 'Hot work inside a confined space also needs a confined space entry permit. Enter its number under "Other permits for this job".' : null,
         (p, h) => {
           const watcher = h.detail('fireWatcher');
@@ -309,7 +326,7 @@
         limits: [OXYGEN, FLAMMABLE, H2S, CO],
       },
       rules: [
-        (p, h) => (h.detail('hotWorkInside') === 'Yes' && h.isBlank(p.otherPermits))
+        (p, h) => (h.detail('hotWorkInside') === 'Yes' && !linksPermit(p, 'hot_work'))
           ? 'Hot work inside the space needs its own hot work permit. Enter its number under "Other permits for this job".' : null,
         (p, h) => ([].concat(h.detail('entrants') || []).some((e) => sameName(e, h.detail('attendant'))))
           ? 'The standby person cannot also be an entrant. Name someone who stays outside.' : null,
@@ -408,7 +425,10 @@
         requireCheckWhen('mewpGround', (p, h) => /MEWP/.test(h.detail('access'))),
         requireCheckWhen('boomHarness', (p, h) => /boom/i.test(h.detail('access'))),
         requireCheckWhen('independentLine', (p, h) => /Suspended|Rope access/.test(h.detail('access'))),
-        requireCheckWhen('ladderUse', (p, h) => /Ladder/.test(h.detail('access'))),
+        requireCheckWhen('ladderUse', (p, h) => /Leaning ladder/.test(h.detail('access'))),
+        requireCheckWhen('stepladder', (p, h) => /Stepladder/.test(h.detail('access'))),
+        (p, h) => (/Stepladder/.test(h.detail('access')) && h.num(h.detail('height')) > 1.8)
+          ? 'Stepladders are limited to a working height of 1.8 m (ADOSH-SF CoP 37.0). Use a platform, tower or MEWP.' : null,
         requireCheckWhen('harnessChecked', (p, h) => needsHarness(h)),
         requireCheckWhen('anchorsCertified', (p, h) => needsHarness(h)),
         requireCheckWhen('fragileRoof', (p, h) => h.detail('fragile') === 'Yes'),
@@ -429,7 +449,7 @@
           ? 'Record the scaffold or tower tag number and last inspection date.' : null,
         (p, h) => (/MEWP/.test(h.detail('access')) && h.isBlank(h.detail('mewp')))
           ? 'Record the MEWP ID, certificate and operator card.' : null,
-        (p, h) => (/Ladder/.test(h.detail('access')) && h.num(h.detail('height')) > 2 && !needsHarness(h))
+        (p, h) => (/Leaning ladder/.test(h.detail('access')) && h.num(h.detail('height')) > 2 && !needsHarness(h))
           ? 'Above 2 m, people on a ladder need a harness and safety line (ADOSH-SF CoP 37.0). Choose restraint or fall arrest.' : null,
         (p, h) => (/MEWP|Suspended|Rope access/.test(h.detail('access')) && (h.isBlank(h.detail('windLimit')) || h.isBlank(h.detail('windReading'))))
           ? 'Record the wind limit and the wind speed at working height for MEWPs, cradles and rope access.' : null,
@@ -494,7 +514,7 @@
         { key: 'banksman', label: 'Banksman for machine digging within 3 m of known services' },
         { key: 'plantSeparation', label: 'Nobody in the trench or slew radius while the bucket works; banksman or zone' },
         { key: 'overheadControls', label: 'Goalposts and height limiters under overhead lines, or written isolation' },
-        { key: 'sidesSupported', label: 'Sides supported, battered or benched where over 1.2 m or unstable', required: true },
+        { key: 'sidesSupported', label: 'Sides supported, battered or benched over 1.2 m, or rock assessed as stable', required: true },
         { key: 'spoilBack', label: 'Spoil, materials and plant kept back from the edge as recorded', required: true },
         { key: 'edgeBarriers', label: 'Rigid 950 mm barriers where a fall is over 2 m; edges marked below that', required: true },
         { key: 'safeAccess', label: 'Safe way in and out where people enter; ladders tied, 1 m above ground', required: true },
@@ -540,7 +560,7 @@
           return angle > max
             ? `A ${angle}° batter is steeper than the ${max}° safe slope for ${what} (ADOSH-SF CoP 29.0 Table 1). Flatten it, or record the engineer's design.` : null;
         },
-        (p, h) => (h.detail('confinedSpace') === 'Yes' && h.isBlank(p.otherPermits))
+        (p, h) => (h.detail('confinedSpace') === 'Yes' && !linksPermit(p, 'confined_space'))
           ? 'An excavation that could be a confined space also needs a confined space entry permit. Enter its number under "Other permits for this job".' : null,
         (p, h) => {
           const v = h.num(h.detail('setBack'));
@@ -621,7 +641,7 @@
       },
       rules: [
         (p) => {
-          const bad = (p.isolations || []).filter((r) => r && CONTROL_DEVICE.test(`${r.point || ''} ${r.method || ''}`));
+          const bad = isolationRows(p).filter(isControlOnly);
           return bad.length
             ? `Stop buttons, selectors, interlocks, PLCs and drives are control devices, not isolating devices (${bad.map((r) => String(r.point || '').slice(0, 30)).join(', ')}). Isolate at the breaker, isolator or valve.` : null;
         },
@@ -636,7 +656,7 @@
         requireCheckWhen('testerChecked', (p) => isElectrical(p)),
         requireCheckWhen('electricalPpe', (p) => isElectrical(p)),
         requireCheckWhen('backfeed', (p) => (p.isolations || []).some((r) => r && /Back-feed|Stored electrical/.test(r.energy || ''))),
-        requireCheckWhen('processIsolation', (p) => (p.isolations || []).some((r) => r && /Chemical|Hydraulic|Pneumatic|Thermal/.test(r.energy || ''))),
+        requireCheckWhen('processIsolation', (p) => (p.isolations || []).some((r) => r && /Chemical/.test(r.energy || ''))),
       ],
       closeoutFields: [
         { key: 'returnedAt', label: 'Returned to service at', kind: 'datetime' },
@@ -712,7 +732,7 @@
       rules: [
         (p, h) => (/Pressure/.test(h.detail('category')) && (h.isBlank(h.detail('pressureTest')) || h.isBlank(h.detail('pressureMedium'))))
           ? 'Record the pressure test medium and details.' : null,
-        (p, h) => (/Scaffold/.test(h.detail('category')) && h.isBlank(p.otherPermits))
+        (p, h) => (/Scaffold/.test(h.detail('category')) && !linksPermit(p, 'work_at_height'))
           ? 'Scaffold erection and dismantling is work at height. Enter the work at height permit number under "Other permits for this job".' : null,
         (p, h) => (h.detail('isolationNeeded') === 'Yes' && h.isBlank(h.detail('isolationCert')))
           ? 'Record the isolation certificate or ISO permit number.' : null,
@@ -813,22 +833,44 @@
     });
     return out;
   }
-  function recordedGasTests(permit) {
-    return (permit && Array.isArray(permit.gasTests) ? permit.gasTests : [])
-      .filter((t) => t && (t.at || t.o2 !== undefined));
+  // Rows in the gas table that hold anything at all.
+  function gasRows(permit, type) {
+    const keys = (type && type.gasTest ? type.gasTest.limits : []).map((l) => l.key).concat(['o2']);
+    return (permit && Array.isArray(permit.gasTests) ? permit.gasTests : []).filter((t) => t && (
+      !isBlank(t.at) || !isBlank(t.testedBy) || !isBlank(t.instrument) || keys.some((k) => !isBlank(t[k]))));
   }
+  const timeOf = (t) => Date.parse((t && t.at) || '');
   function latestGasTest(permit) {
-    const tests = recordedGasTests(permit);
-    if (!tests.length) return null;
-    return tests.slice().sort((a, b) => String(a.at || '').localeCompare(String(b.at || ''))).pop();
+    const rows = gasRows(permit, typeOf(permit)).filter((t) => !Number.isNaN(timeOf(t)));
+    if (!rows.length) return null;
+    return rows.slice().sort((a, b) => timeOf(a) - timeOf(b)).pop();
   }
-  // The latest round: every reading recorded at the same time as the latest
-  // one (for example the top, middle and bottom of a tank). All of them must
-  // pass; earlier rounds stay on the permit as the record of what was found.
-  function latestGasRound(permit) {
-    const last = latestGasTest(permit);
-    if (!last) return [];
-    return recordedGasTests(permit).filter((t) => String(t.at || '') === String(last.at || ''));
+  // The readings that decide whether work can go ahead: the latest reading at
+  // each test point (top, middle, bottom, inside the drum...). Readings with no
+  // point named count as one point. Every one of them must pass, so re-testing
+  // one point cannot clear a failed reading at another; earlier readings stay
+  // on the permit as the record of what was found.
+  function latestGasReadings(permit, type) {
+    const byPoint = new Map();
+    gasRows(permit, type || typeOf(permit)).forEach((t) => {
+      const at = timeOf(t);
+      if (Number.isNaN(at)) return;
+      const key = String(t.point || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const cur = byPoint.get(key);
+      if (!cur || at > cur.at) byPoint.set(key, { at, rows: [t] });
+      else if (at === cur.at) cur.rows.push(t);
+    });
+    return [].concat(...[...byPoint.values()].map((v) => v.rows));
+  }
+  function latestGasRound(permit) { return latestGasReadings(permit, typeOf(permit)); }
+  // Readings in the latest round that are outside the type's limits.
+  function failingGasReadings(permit) {
+    const type = typeOf(permit);
+    if (!type.gasTest) return [];
+    const bad = [];
+    latestGasReadings(permit, type).forEach((t) => gasProblems(t, type.gasTest.limits)
+      .forEach((b) => bad.push(isBlank(t.point) ? b : `${String(t.point).trim()}: ${b}`)));
+    return bad;
   }
   const sameName = (a, b) => {
     const n = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -843,6 +885,7 @@
     const type = typeOf(permit);
     const p = permit || {};
     ctx = ctx || {};
+    const orig = ctx.original || null;
 
     if (isBlank(p.projectNumber)) errors.push('Project number is required.');
     if (isBlank(p.location)) errors.push('Location is required.');
@@ -855,12 +898,15 @@
     const to = Date.parse(p.validTo || '');
     if (Number.isNaN(from) || Number.isNaN(to) || to <= from) {
       errors.push('Valid-to date/time must be after valid-from date/time.');
-    } else if (type.maxValidityHours && (to - from) > type.maxValidityHours * 36e5) {
-      errors.push(`A ${type.label.toLowerCase()} permit can be valid for at most ${type.maxValidityHours} hours. Revalidate or issue a new permit for longer work.`);
+    } else if (type.maxValidityHours && (to - from) > type.maxValidityHours * 36e5 && !unchanged(orig, p, ['validFrom', 'validTo'])) {
+      // A permit saved before this limit existed keeps its window when edited.
+      errors.push(`${aPermit(type)} can be valid for at most ${type.maxValidityHours} hours. Revalidate or issue a new permit for longer work.`);
     }
 
     (type.fields || []).forEach((f) => {
-      if (f.required && isBlank(detailValue(p, f.key))) errors.push(`${f.label} is required.`);
+      if (f.required && isBlank(detailValue(p, f.key))) {
+        errors.push(/\?$/.test(f.label) ? `Answer: ${f.label}` : f.kind === 'select' ? `Choose: ${f.label}.` : `Fill in: ${f.label}.`);
+      }
       if (f.kind === 'number' && !isBlank(detailValue(p, f.key))) {
         const v = num(detailValue(p, f.key));
         if (Number.isNaN(v)) errors.push(`${f.label} must be a number.`);
@@ -874,31 +920,40 @@
 
     if (type.gasTest) {
       // A type may need a test always (confined space) or only in some
-      // conditions (hot work near flammables). Any test recorded must be
-      // complete and within the limits, and recent enough to count.
+      // conditions (hot work near flammables). Every reading must be timed and
+      // complete, and the latest readings recent and within the limits.
+      // ctx.allowFailedGas lets an issued permit save a failed re-test so the
+      // caller can suspend it instead of losing the reading.
       const needed = type.gasTest.required || (type.gasTest.requiredWhen && type.gasTest.requiredWhen(p, helpers(p, type)));
-      const round = latestGasRound(p);
-      if (!round.length && needed) errors.push(`Record a gas test before ${type.gasTest.beforeWhat || 'work starts'}.`);
-      if (round.length) {
-        const at = Date.parse(round[0].at || '');
+      const rows = gasRows(p, type);
+      const before = type.gasTest.beforeWhat || 'work starts';
+      if (!rows.length && needed) errors.push(`Record a gas test before ${before}.`);
+      const now = ctx.now != null ? ctx.now : Date.now();
+      if (rows.some((t) => Number.isNaN(timeOf(t)))) errors.push('Every gas reading needs the date and time it was taken.');
+      if (rows.some((t) => timeOf(t) > now + 10 * 60000)) errors.push('A gas reading is timed in the future. Check its date and time.');
+      else if (!Number.isNaN(to) && rows.some((t) => timeOf(t) > to)) errors.push('A gas reading is timed after the permit ends. Check its date and time.');
+      const latest = latestGasReadings(p, type);
+      if (latest.length) {
         const maxAge = type.gasTest.maxAgeHours || 2;
-        if (Number.isNaN(at)) errors.push('Record the time of the latest gas test.');
-        else if (!Number.isNaN(from) && at < from - maxAge * 36e5) {
-          errors.push(`The latest gas test was more than ${maxAge} hours before the permit starts. Test again just before ${type.gasTest.beforeWhat || 'work starts'}.`);
+        if (!Number.isNaN(from) && latest.some((t) => timeOf(t) < from - maxAge * 36e5)) {
+          errors.push(`The latest gas test was more than ${maxAge} hours before the permit starts. Test again just before ${before}.`);
         }
-        if (round.some((t) => isBlank(t.testedBy))) errors.push('Record who carried out the latest gas test.');
-        if (round.some((t) => isBlank(t.instrument))) errors.push('Record the gas detector used for the latest test.');
-        const bad = [];
-        round.forEach((t) => gasProblems(t, type.gasTest.limits).forEach((b) => bad.push(isBlank(t.point) ? b : `${String(t.point).trim()}: ${b}`)));
-        if (bad.length) errors.push(`The latest gas test is outside the limits (${bad.join('; ')}). ${type.gasTest.failAdvice || 'Do not start work.'}`);
+        if (latest.some((t) => isBlank(t.testedBy))) errors.push('Record who carried out the latest gas test.');
+        if (latest.some((t) => isBlank(t.instrument))) errors.push('Record the gas detector used for the latest test.');
+        const bad = failingGasReadings(p);
+        if (bad.length && !ctx.allowFailedGas) {
+          errors.push(`The latest gas test is outside the limits (${bad.join('; ')}). ${type.gasTest.failAdvice || 'Do not start work.'}`);
+        }
       }
     }
 
     if (type.isolations) {
-      const rows = (Array.isArray(p.isolations) ? p.isolations : []).filter((r) => r && !isBlank(r.point));
+      const rows = isolationRows(p);
       if (!rows.length) errors.push('List at least one isolation point.');
       rows.forEach((r, i) => {
-        const name = `Isolation ${i + 1} (${String(r.point).slice(0, 40)})`;
+        const name = isBlank(r.point) ? `Isolation ${i + 1}` : `Isolation ${i + 1} (${String(r.point).slice(0, 40)})`;
+        if (isBlank(r.point)) errors.push(`${name}: name the equipment or isolation point.`);
+        if (isBlank(r.method)) errors.push(`${name}: record how it was isolated.`);
         if (isBlank(r.lockNo)) errors.push(`${name}: lock or tag number is required.`);
         if (isBlank(r.isolatedBy)) errors.push(`${name}: record who isolated it.`);
         if (!r.verified) errors.push(`${name}: confirm zero energy was verified.`);
@@ -906,7 +961,7 @@
     }
 
     if (isBlank(p.issuerName)) errors.push('Issuer name is required.');
-    else if (sameName(p.issuerName, p.personInCharge)) {
+    else if (sameName(p.issuerName, p.personInCharge) && !unchanged(orig, p, ['issuerName', 'personInCharge'])) {
       errors.push(`The issuer and the ${(type.personInChargeLabel || 'person in charge').replace(/ \(.*\)$/, '').toLowerCase()} must be different people (ADOSH-SF CoP 21.0).`);
     }
     if (isBlank(p.issuerSignature)) errors.push('Issuer signature is required.');
@@ -917,7 +972,7 @@
       else if (!a.isValid) errors.push('The linked crane assessment is not within capacity — a critical lift cannot proceed on a failed assessment.');
       if (isBlank(p.approverName) || isBlank(p.approverSignature)) errors.push('Critical lifts require an approver name and signature.');
     } else if (type.approverRequired && (isBlank(p.approverName) || isBlank(p.approverSignature))) {
-      errors.push(`${type.label} permits require an approver name and signature.`);
+      errors.push(`${aPermit(type)} needs an approver name and signature.`);
     }
 
     (type.rules || []).forEach((rule) => {
@@ -926,6 +981,31 @@
     });
     return errors;
   }
+
+  // Rows in the isolation table that hold anything (the form keeps the same).
+  function isolationRows(p) {
+    return (p && Array.isArray(p.isolations) ? p.isolations : [])
+      .filter((r) => r && (!isBlank(r.point) || !isBlank(r.method) || !isBlank(r.lockNo) || !isBlank(r.isolatedBy)));
+  }
+
+  // True when an edited permit still has the same values as the saved one, so
+  // rules added later do not stop an older permit being updated.
+  function unchanged(orig, p, keys) {
+    if (!orig) return false;
+    return keys.every((k) => {
+      const a = orig[k]; const b = p[k];
+      const ta = Date.parse(a || ''); const tb = Date.parse(b || '');
+      if (/^valid/.test(k) && !Number.isNaN(ta) && !Number.isNaN(tb)) return Math.abs(ta - tb) < 60000;
+      return String(a || '').trim() === String(b || '').trim();
+    });
+  }
+
+  // "energy isolation (LOTO)", "a hot work permit", "an excavation permit".
+  function nameOf(type) {
+    const l = type.label;
+    return /^[A-Z][a-z]/.test(l) ? l[0].toLowerCase() + l.slice(1) : l;
+  }
+  function aPermit(type) { return `${/^[aeiou]/i.test(type.label) ? 'An' : 'A'} ${nameOf(type)} permit`; }
 
   function helpers(p, type) {
     return {
@@ -958,7 +1038,8 @@
   const api = {
     TYPES, DEFAULT_TYPE, STATUS_LABELS,
     byKey, isType, typeKeyOf, typeOf, labelOf, statusOf,
-    nextNumber, checkValue, detailValue, gasProblems, latestGasTest, latestGasRound,
+    nextNumber, checkValue, detailValue, gasProblems, latestGasTest, latestGasRound, latestGasReadings, failingGasReadings,
+    isolationRows, nameOf,
     validate, validateCloseout,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

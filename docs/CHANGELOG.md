@@ -29,8 +29,10 @@ No install; runs in any modern browser on phone, tablet or desktop.
     - Gas tests record the time, where the reading was taken, the tester and the
       detector. Oxygen must be 19.5–23.5 % and flammable gas below 5 % LEL;
       confined spaces and excavations also test H₂S (no more than 1 ppm) and CO
-      (no more than 25 ppm). Every reading in the latest round must pass, and the
-      round must be no more than 2 hours before the permit starts. Confined space
+      (no more than 25 ppm). The latest reading at every test point (top, middle,
+      bottom...) must pass, so re-testing one point cannot clear another, and it
+      must be no more than 2 hours before the permit starts. Every reading needs its
+      time, and times in the future or after the permit ends are refused. Confined space
       entry always needs a test; hot work needs one in hazardous areas, confined
       spaces, near live plant and on containers; excavations when they could be a
       confined space or are over 1.2 m deep near a gas source; general work when
@@ -61,10 +63,21 @@ No install; runs in any modern browser on phone, tablet or desktop.
     - Precautions that only apply sometimes (flashback arrestors for gas cutting,
       a proven voltage tester for electrical isolation, tower checks for mobile
       towers) become required when they apply.
+  - **Printing.** Gas and isolation tables fit the printed page.
+  - **Terms and Privacy** mention the permit records, so everyone is asked to
+    accept them again once.
   - **Records.** Deleting a permit warns that CoP 21.0 asks for permit records to
     be kept for at least 1 year.
+  - **Re-tests during the work.** A failed gas re-test on an issued permit is saved
+    and suspends the permit, with the readings as the reason, so the record is
+    kept and work stops.
+  - **Editing older permits.** Rules added in this version (the 12-hour limit, the
+    issuer being someone other than the permit holder) apply only when those
+    values change, so permits saved before v1.11.0 can still be updated.
   - **Close-out.** Closing a permit records who closed it, when, and the
-    close-out checks; closed permits are read-only. Permits linked to a project
+    close-out checks; closed permits are read-only. The verifier's name and
+    signature entered on the form are kept; any other unsaved change must be saved
+    first, so closing never throws it away. Permits linked to a project
     update the tracked item (suspended = open, closed or expired = closed).
   - **Permit list and dashboard.** The list filters by type and status (now
     including closed). The dashboard counts active permits, high-risk permits
@@ -73,9 +86,10 @@ No install; runs in any modern browser on phone, tablet or desktop.
     are read as lifting permits, with the same checklist and critical-lift rules.
   - **Fixes.** Permit fields, status banners and the list are escaped before
     display. New permits get sensible default times again.
-  - **Tests.** 27 unit tests for the permit rules (`test/permit-types.test.mjs`);
+  - **Tests.** 33 unit tests for the permit rules (`test/permit-types.test.mjs`);
     the browser test issues a confined space permit (refused on low oxygen),
-    tracks and closes it on a project, and checks the hot work fire watch.
+    tracks it on a project, prints it, suspends it on a failed re-test and closes
+    it, and checks the hot work fire watch.
 
 - **For all of HSE, and a safer "Delete my data" (v1.10.0)**
   - **Erasing data needs your password.** The Delete my data page is still public

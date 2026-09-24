@@ -28,7 +28,7 @@ function complete(key, extra = {}, details = {}) {
     id: 'P-1', permitType: key, status: 'active',
     projectNumber: 'PRJ-1', location: 'Unit 4 pipe rack', workDescription: 'Replace flange gasket',
     validFrom: FROM, validTo: TO, personInCharge: 'R. Khan', hasRiskAssessment: true, hasMethodStatement: true,
-    otherPermits: 'CSE-2026-0001',
+    otherPermits: 'CSE-2026-0001, HW-2026-0002, WAH-2026-0003',
     issuerName: 'A. Issuer', issuerSignature: SIG, approverName: 'B. Approver', approverSignature: SIG,
   };
   if (type.topLevelChecks) type.checks.forEach((c) => { p[c.key] = true; });
@@ -373,7 +373,7 @@ test('work at height: guardrails first, fall clearance, ladders, wind for MEWPs'
   assert.deepEqual(PT.validate(complete('work_at_height', {}, { height: 1.5, fallProtection: arrest, whyNotCollective: '' }), {}), []);
   assert.ok(has(PT.validate(complete('work_at_height', {}, { fallProtection: arrest, clearanceAvailable: 3, clearanceNeeded: 5.5 }), {}), /Only 3 m is clear below/));
   assert.ok(has(PT.validate(complete('work_at_height', {}, { fallProtection: arrest, clearanceAvailable: '' }), {}), /clear distance below/));
-  assert.ok(has(PT.validate(complete('work_at_height', {}, { access: 'Ladder or stepladder', height: 3, fallProtection: 'Guardrails / edge protection', anchors: '', rescuers: [] }), {}), /CoP 37\.0/));
+  assert.ok(has(PT.validate(complete('work_at_height', {}, { access: 'Leaning ladder', height: 3, fallProtection: 'Guardrails / edge protection', anchors: '', rescuers: [] }), {}), /CoP 37\.0/));
   assert.ok(has(PT.validate(complete('work_at_height', {}, { access: 'MEWP – scissor lift', windLimit: '', windReading: '' }), {}), /wind limit and the wind speed/));
   const boom = complete('work_at_height', {}, { access: 'MEWP – boom lift' }); boom.checks.boomHarness = false;
   assert.ok(has(PT.validate(boom, {}), /Boom lift/));
@@ -430,4 +430,73 @@ test('energy isolation: a stop button or interlock is not isolation', () => {
   const row = { point: 'Pump P-4', energy: 'Electrical', method: 'E-stop pressed and tagged', lockNo: 'L-3', isolatedBy: 'E. Tech', verified: true };
   assert.ok(has(PT.validate(complete('energy_isolation', { isolations: [row] }), {}), /not isolating devices/));
   assert.deepEqual(PT.validate(complete('energy_isolation', { isolations: [{ ...row, method: 'Breaker racked out and locked' }] }), {}), []);
+});
+
+test('gas tests: the latest reading at every test point must pass', () => {
+  const t = PT.byKey('confined_space');
+  const at = (hhmm) => `2026-09-24T${hhmm}:00.000Z`;
+  const reading = (hhmm, point, extra = {}) => ({ ...goodGas(t, at(hhmm)), point, ...extra });
+  // Readings taken a couple of minutes apart still all count.
+  assert.ok(has(PT.validate(complete('confined_space', { gasTests: [reading('05:50', 'Top', { h2s: 8 }), reading('05:52', 'Bottom')] }), {}), /Top: H₂S 8 ppm/));
+  // Re-testing only the bottom does not clear a failed top.
+  const partial = [reading('05:40', 'Top', { h2s: 8 }), reading('05:40', 'Middle'), reading('05:40', 'Bottom'), reading('05:50', 'Bottom')];
+  assert.ok(has(PT.validate(complete('confined_space', { gasTests: partial }), {}), /Top: H₂S 8 ppm/));
+  assert.deepEqual(PT.validate(complete('confined_space', { gasTests: partial.concat([reading('05:55', 'top ')]) }), {}), []);
+  // Every reading needs a time, and times cannot be in the future or after the permit.
+  assert.ok(has(PT.validate(complete('confined_space', { gasTests: [reading('05:50', 'Top'), { ...goodGas(t), at: '', h2s: 9 }] }), {}), /needs the date and time/));
+  const iso = complete('energy_isolation', { gasTests: [{ at: '', lel: 40, testedBy: 'G', instrument: 'D' }] }, { hazardousArea: 'No' });
+  assert.ok(has(PT.validate(iso, {}), /needs the date and time/), 'an untimed reading is not ignored');
+  assert.ok(has(PT.validate(complete('confined_space', { gasTests: [reading('05:50', 'Top')] }), { now: Date.parse(at('04:00')) }), /in the future/));
+  assert.ok(has(PT.validate(complete('confined_space', { gasTests: [reading('15:00', 'Top')] }), { now: Date.parse(at('16:00')) }), /after the permit ends/));
+});
+
+test('gas tests: an issued permit can record a failed re-test for suspension', () => {
+  const t = PT.byKey('confined_space');
+  const p = complete('confined_space', { permitNumber: 'CSE-2026-0001', gasTests: [goodGas(t, '2026-09-24T05:45:00.000Z'), { ...goodGas(t, '2026-09-24T10:00:00.000Z'), h2s: 5 }] });
+  const now = Date.parse('2026-09-24T10:05:00.000Z');
+  assert.ok(has(PT.validate(p, { now }), /outside the limits/));
+  assert.deepEqual(PT.validate(p, { now, allowFailedGas: true }), []);
+  assert.deepEqual(PT.failingGasReadings(p), ['H₂S 5 ppm is above 1 ppm']);
+});
+
+test('older permits can still be edited: rules added later apply only to changed values', () => {
+  const old = complete('lifting', { validFrom: '2026-09-20T07:00', validTo: '2026-09-24T17:00:00.000Z', issuerName: 'J. Doe', personInCharge: 'J. Doe' });
+  const edited = { ...old, validFrom: new Date(Date.parse(old.validFrom)).toISOString(), verifierName: 'V. Verifier' };
+  assert.deepEqual(PT.validate(edited, { original: old }), [], 'same window and names');
+  assert.ok(has(PT.validate({ ...edited, validTo: '2026-09-25T17:00:00.000Z' }, { original: old }), /at most 12 hours/));
+  assert.ok(has(PT.validate({ ...edited, issuerName: 'j. doe', personInCharge: 'J.  Doe', validTo: old.validTo }, { original: { ...old, issuerName: 'A. Other' } }), /different people/));
+  assert.ok(has(PT.validate(edited, {}), /A lifting permit can be valid for at most 12 hours/));
+  assert.ok(has(PT.validate(complete('excavation', { validTo: '2026-09-25T06:00:00.000Z' }), {}), /^An excavation permit/));
+});
+
+test('energy isolation: every row is checked, stored electrical is electrical, control devices are refused by method', () => {
+  const row = { point: 'UPS-2 battery bank', energy: 'Stored electrical (capacitors, batteries, UPS)', method: 'Battery breaker open and locked', lockNo: 'L-5', isolatedBy: 'E. Tech', verified: true };
+  const ups = complete('energy_isolation', { isolations: [row] }, { electrician: '', voltage: '', tester: '' });
+  assert.ok(has(PT.validate(ups, {}), /authorised electrical person/));
+  const unnamed = complete('energy_isolation', { isolations: [row, { energy: 'Electrical', lockNo: 'L2', isolatedBy: 'C', method: 'MCB off', verified: false }] });
+  const errs = PT.validate(unnamed, {});
+  assert.ok(has(errs, /Isolation 2: name the equipment/) && has(errs, /Isolation 2: confirm zero energy/));
+  assert.ok(has(PT.validate(complete('energy_isolation', { isolations: [{ ...row, method: '' }] }), {}), /record how it was isolated/));
+  const plc = { point: 'PLC panel CP-1 supply', energy: 'Electrical', method: 'MCB-4 in DB-2 off and locked', lockNo: 'L-1', isolatedBy: 'E', verified: true };
+  const vfd = { ...plc, point: 'VFD-101 incomer isolator', method: 'Rotary isolator off and locked' };
+  assert.deepEqual(PT.validate(complete('energy_isolation', { isolations: [plc, vfd] }), {}), [], 'a PLC or VFD named in the point is fine');
+  assert.ok(has(PT.validate(complete('energy_isolation', { isolations: [{ ...plc, method: 'Selector to OFF' }] }), {}), /not isolating devices/));
+  assert.ok(has(PT.validate(complete('energy_isolation', { isolations: [{ ...plc, point: 'E-stop at conveyor', method: '' }] }), {}), /not isolating devices/));
+  const press = complete('energy_isolation', { isolations: [{ point: 'Press hydraulic power pack valve', energy: 'Hydraulic', method: 'Valve closed, locked, pressure bled', lockNo: 'L-8', isolatedBy: 'M', verified: true }] });
+  press.checks.processIsolation = false;
+  assert.deepEqual(PT.validate(press, {}), [], 'machine hydraulics need no blinds or spades');
+});
+
+test('other permits must name the right type of permit', () => {
+  const cs = { area: 'Inside a confined space' };
+  assert.ok(has(PT.validate(complete('hot_work', { otherPermits: 'WAH-2026-0004' }, cs), {}), /confined space entry permit/));
+  assert.deepEqual(PT.validate(complete('hot_work', { otherPermits: 'Confined space permit to follow' }, cs), {}), []);
+  assert.ok(has(PT.validate(complete('confined_space', { otherPermits: 'ISO-2026-0003' }, { hotWorkInside: 'Yes' }), {}), /hot work permit/));
+});
+
+test('work at height: stepladders', () => {
+  const step = complete('work_at_height', {}, { access: 'Stepladder', height: 1.5 }); step.checks.stepladder = false; step.checks.ladderUse = false;
+  const errs = PT.validate(step, {});
+  assert.ok(has(errs, /Stepladder working height/) && !has(errs, /tied, 1 m above/));
+  assert.ok(has(PT.validate(complete('work_at_height', {}, { access: 'Stepladder', height: 2.5 }), {}), /limited to a working height of 1\.8 m/));
 });

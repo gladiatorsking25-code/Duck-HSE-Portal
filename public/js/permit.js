@@ -112,7 +112,7 @@ if (missing) {
 } else {
   document.title = `${type.label} permit · Duck HSE Portal`;
   pageTitle.textContent = viewMode ? `${type.label} permit ${permit.permitNumber || ''}`.trim()
-    : isNew ? `New ${type.label.toLowerCase()} permit` : `Edit ${type.label.toLowerCase()} permit ${permit.permitNumber || ''}`.trim();
+    : isNew ? `New ${PermitTypes.nameOf(type)} permit` : `Edit ${PermitTypes.nameOf(type)} permit ${permit.permitNumber || ''}`.trim();
   pageCrumb.textContent = viewMode ? 'Viewing permit — read only' : `Permit to work · ${type.summary}`;
   document.getElementById('permitTypeLabel').value = type.label;
   document.getElementById('workDescription').placeholder = type.workPlaceholder || 'Describe the work to be carried out';
@@ -206,9 +206,10 @@ const fromLocalInput = (v) => v ? new Date(v).toISOString() : '';
 
 function gasResultBadge(test) {
   const bad = PermitTypes.gasProblems(test, type.gasTest.limits);
-  return bad.length
-    ? `<span class="badge badge-fail" title="${esc(bad.join('; '))}"><span class="badge-dot"></span>Outside limits</span>`
-    : '<span class="badge badge-ok"><span class="badge-dot"></span>Within limits</span>';
+  if (!bad.length) return '<span class="badge badge-ok"><span class="badge-dot"></span>Within limits</span>';
+  const out = bad.filter(b => !/reading missing$/.test(b));
+  if (!out.length) return '<span class="badge badge-neutral">Incomplete</span>';
+  return `<span class="badge badge-fail"><span class="badge-dot"></span>Outside limits</span><span class="gas-why">${esc(out.join('; '))}</span>`;
 }
 
 function addGasRow(test) {
@@ -503,7 +504,25 @@ document.getElementById('btnSuspend')?.addEventListener('click', () => {
   syncPermitToProject(permit).then(() => { alert('Permit suspended.'); location.reload(); });
 });
 
+// Closing saves the permit as it was loaded, so unsaved edits above would be
+// lost. The verifier's name and signature are completion sign-off and are
+// kept; anything else has to be saved first.
+let formDirty = false;
+const markDirty = (e) => {
+  if (e.target.closest('#closeCard, #suspendCard, #actionRow') || e.target.id === 'verifierName' || e.target.id === 'sigVerifier') return;
+  formDirty = true;
+};
+['input', 'change'].forEach(ev => document.getElementById('permitForm').addEventListener(ev, markDirty));
+document.getElementById('permitForm').addEventListener('pointerdown', (e) => {
+  if (e.target.matches('canvas.sig-pad, #btnAddGas, #btnAddIso, [data-remove]')) markDirty(e);
+});
+
 document.getElementById('btnClose')?.addEventListener('click', () => {
+  const errEl = document.getElementById('closeErrors');
+  if (formDirty) {
+    errEl.innerHTML = '<div class="banner banner-danger" style="margin:10px 0;">You have changes above that are not saved. Press <strong>Save permit</strong> first, then close the permit.</div>';
+    return;
+  }
   const closeout = {
     by: document.getElementById('closedBy').value.trim(),
     at: new Date().toISOString(),
@@ -517,13 +536,15 @@ document.getElementById('btnClose')?.addEventListener('click', () => {
     closeout.fields[f.key] = f.kind === 'datetime' ? fromLocalInput(v) : v.trim();
   });
   const errors = PermitTypes.validateCloseout(permit, closeout);
-  const errEl = document.getElementById('closeErrors');
   if (errors.length) {
     errEl.innerHTML = `<div class="banner banner-danger" style="margin:10px 0;">Before closing:<br>&bull; ${errors.map(esc).join('<br>&bull; ')}</div>`;
     return;
   }
   if (!confirm('Close this permit? It can no longer be used for work.')) return;
   errEl.innerHTML = '';
+  permit.verifierName = document.getElementById('verifierName').value.trim();
+  const verifierSig = sigVerifier.toDataUrlSafe();
+  if (verifierSig) permit.verifierSignature = verifierSig;
   permit.status = 'closed';
   permit.closeout = closeout;
   DB.savePermit(permit);
@@ -531,7 +552,7 @@ document.getElementById('btnClose')?.addEventListener('click', () => {
 });
 
 // ---- Save ----
-document.getElementById('btnSave').addEventListener('click', () => {
+function readForm() {
   const data = {
     ...permit,
     permitType: typeKey,
@@ -573,10 +594,17 @@ document.getElementById('btnSave').addEventListener('click', () => {
     type.checks.forEach(item => { data.checks[item.key] = document.getElementById(checkId(item.key)).checked; });
     // A row with only its default time filled in is not a test.
     if (type.gasTest) data.gasTests = readRows('gasRows').filter(t => t.testedBy || t.instrument || type.gasTest.limits.some(l => t[l.key] !== ''));
-    if (type.isolations) data.isolations = readRows('isoRows').filter(r => r.point || r.lockNo || r.isolatedBy);
+    if (type.isolations) data.isolations = PermitTypes.isolationRows({ isolations: readRows('isoRows') });
   }
+  return data;
+}
 
-  const errors = PermitTypes.validate(data, { assessments });
+document.getElementById('btnSave').addEventListener('click', () => {
+  const data = readForm();
+  // An issued permit keeps its record: rules added since it was issued apply
+  // only to what changes, and a failed re-test is saved and suspends it.
+  const issued = !isNew && !!permit.permitNumber;
+  const errors = PermitTypes.validate(data, { assessments, original: isNew ? null : permit, allowFailedGas: issued });
   const errEl = document.getElementById('validationErrors');
   if (errors.length) {
     errEl.innerHTML = `<div class="banner banner-danger">Please correct the following:<br>&bull; ${errors.map(esc).join('<br>&bull; ')}</div>`;
@@ -585,6 +613,15 @@ document.getElementById('btnSave').addEventListener('click', () => {
   }
   errEl.innerHTML = '';
   if (!data.permitNumber) data.permitNumber = DB.nextPermitNumber(typeKey);
+  const failing = issued ? PermitTypes.failingGasReadings(data) : [];
+  if (failing.length && PermitTypes.statusOf(data) === 'active') {
+    const last = PermitTypes.latestGasTest(data);
+    data.status = 'suspended';
+    data.ptwSuspendedBy = (last && last.testedBy) || 'Gas test';
+    data.suspensionReason = `Gas test outside the limits (${failing.join('; ')}). Stop work and make the area safe.`;
+    data.suspendedAt = new Date().toISOString();
+    alert('The latest gas test is outside the limits, so this permit has been suspended. Stop work and make the area safe.');
+  }
   permit = data;
   DB.savePermit(permit);
   syncPermitToProject(permit).then(() => { location.href = `permit.html?id=${encodeURIComponent(permit.id)}&mode=view`; });
