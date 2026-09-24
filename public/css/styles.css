@@ -60,6 +60,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
 }
 .brand {
   padding: 22px 20px 18px;
