@@ -853,6 +853,8 @@ body.modal-open { overflow: hidden; }
 .gas-table input, .iso-table input, .iso-table select { width: 100%; min-width: 70px; }
 .gas-table td, .iso-table td { vertical-align: middle; }
 .gas-table input[type="datetime-local"] { min-width: 170px; }
+.gas-table input[type="text"] { min-width: 110px; }
+.gas-table td[data-result] .badge { white-space: nowrap; }
 .iso-table td:first-child input { min-width: 160px; }
 @media print {
   .gas-table input, .iso-table input, .iso-table select { border: none; padding: 0; background: none; }
