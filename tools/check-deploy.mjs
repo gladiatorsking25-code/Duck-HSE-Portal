@@ -130,6 +130,16 @@ export function checkAll(repo = REPO) {
   if (/HOST_DOMAIN/.test(twa)) r.warnings.push('twa-manifest.json still says HOST_DOMAIN. Only matters when you build the Android app.');
   const twaVersion = (twa.match(/"appVersionName"\s*:\s*"([^"]+)"/) || [])[1];
   if (twaVersion && r.version && twaVersion !== r.version) r.warnings.push(`twa-manifest.json is version ${twaVersion}, the website is ${r.version}. Match them before the next Android build.`);
+  // The Android app hides the address bar and can take Google Play payments
+  // only once this file names the app's signing certificate.
+  const links = readText(path.join(repo, 'public'), '.well-known/assetlinks.json');
+  if (links) {
+    let prints = [];
+    try { prints = JSON.parse(links).flatMap((s) => (s && s.target && s.target.sha256_cert_fingerprints) || []); } catch (e) { /* warned below */ }
+    if (!prints.length || prints.some((f) => !/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/i.test(f))) {
+      r.warnings.push('public/.well-known/assetlinks.json still has a placeholder fingerprint. Only matters for the Android app: put in the SHA-256 fingerprints from Play Console (docs/PLAY_STORE_LAUNCH.md, section 2).');
+    }
+  }
   return r;
 }
 

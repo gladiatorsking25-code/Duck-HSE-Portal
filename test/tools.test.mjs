@@ -74,6 +74,19 @@ test('the deploy target must be the project the website uses', () => {
   rmSync(dir, { recursive: true });
 });
 
+test('a placeholder in the Android app links file is flagged, a real fingerprint is not', () => {
+  const links = (print) => JSON.stringify([{ relation: ['delegate_permission/common.handle_all_urls'],
+    target: { namespace: 'android_app', package_name: 'Duck.HSE.Portal', sha256_cert_fingerprints: [print] } }]);
+  const real = Array.from({ length: 32 }, (_, i) => (i * 7 % 256).toString(16).padStart(2, '0').toUpperCase()).join(':');
+  for (const [body, flagged] of [[links('REPLACE_WITH_PLAY_APP_SIGNING_SHA256'), true], ['not json', true], ['[]', true], [links(real), false]]) {
+    const dir = fakeRepo(Object.assign({}, GOOD, { 'public/.well-known/assetlinks.json': body }));
+    const r = checkAll(dir);
+    assert.equal(/assetlinks\.json still has a placeholder fingerprint/.test(r.warnings.join('\n')), flagged, body);
+    assert.deepEqual(r.errors, []);
+    rmSync(dir, { recursive: true });
+  }
+});
+
 // Reads a zip back with nothing but Node, to prove the archive is well formed.
 function unzip(buf) {
   const end = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));

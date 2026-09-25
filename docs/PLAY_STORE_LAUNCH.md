@@ -19,7 +19,7 @@
 |---|---|---|
 | Package the existing site as a TWA with Bubblewrap | free | — |
 | Domain name (`.com` or `.ae`) — **required**, see §2 | ~AED 40–150 / yr | yearly |
-| Hosting (GitHub Pages, already in use) | free | — |
+| Hosting (Hostinger, already in use — see `DEPLOY.md`) | your plan | yearly |
 | Google Play developer registration | US$25 (~AED 92) | one-time |
 | Play's revenue share on paid subscriptions | 15% of first US$1M/yr | per sale |
 | UAE trade licence (needed to *sell*, not to publish free) | ~AED 1,000–12,500 / yr | yearly |
@@ -43,8 +43,9 @@ Everything below is already in the repo — nothing was removed to make room.
 | `js/pwa.js` | Registers the worker, prompts on update, shows an offline bar, exposes an install button. |
 | `offline.html` | Friendly fallback instead of a browser error. |
 | `assets/icons/*` | Full launcher icon set, including **maskable** variants (Android crops icons to arbitrary shapes) and the 512×512 Play listing icon + 1024×500 feature graphic. |
-| `.well-known/assetlinks.json` | Digital Asset Links — proves the app and site are yours so the URL bar is hidden. See `.well-known/README.md`. |
-| `twa-manifest.json` | Bubblewrap config. |
+| `.well-known/assetlinks.json` | Digital Asset Links — proves the app and site belong together, so the app has no address bar and Google Play billing works in it. Ships with a placeholder fingerprint you replace (§2). |
+| `twa-manifest.json` | Bubblewrap config, with Play Billing switched on (`features.playBilling`, which Bubblewrap only accepts together with `enableNotifications: true`). The app opens `index.html?src=twa`, which is how the paywall knows it is inside the app. |
+| `js/billing.js`, `verifyPlayPurchase`, `playRTDN` | Google Play subscriptions: buy, restore, and renewals (§3a). |
 | `account-deletion.html` | Play's User Data policy requires a **publicly reachable** deletion URL. |
 | `about.html` | Version/build, support contacts, licences, safety scope. |
 | `js/app-version.js` | One place for version + publisher identity, mirrored into the Play build. |
@@ -57,32 +58,47 @@ most common Play rejections. The sign-in gate still protects everything else.
 
 ---
 
-## 2. Hosting and the domain you cannot avoid
+## 2. Hosting, the domain, and Digital Asset Links
 
-GitHub Pages is fine and free. But Android fetches Digital Asset Links from the
+The website runs on Hostinger at the root of your own domain (`DEPLOY.md`,
+step 7). That is what Android needs: it reads Digital Asset Links from the
 **root of the domain**:
 
 ```
 https://<domain>/.well-known/assetlinks.json
 ```
 
-On `https://<user>.github.io/<repo>/` your files live in a sub-path, and you
-don't control `github.io`'s root. Verification fails and the app opens with a
-Chrome address bar across the top.
+If that file is missing, wrong, or redirects, the app opens with a Chrome
+address bar across the top, and Google Play billing does not work in it. The
+file is already in `public/`, with a placeholder: steps 2–5 need the upload key
+from §3 and, for the second fingerprint, the app's first upload to Play (§4).
+Until then the placeholder does no harm to the website.
 
-**So: buy a domain, point it at Pages, and serve the site from its root.** That
-single yearly fee is the only unavoidable recurring cost of the free tier.
-
-1. Buy a domain (any registrar).
-2. Repo → **Settings → Pages → Custom domain**, enter it, tick **Enforce HTTPS**.
-3. Add the DNS records GitHub shows you.
-4. Keep the `.nojekyll` file at the repo root — without it, Jekyll processing can
-   interfere with dot-directories like `.well-known`.
-5. Verify:
+1. **Use one host.** Put in `twa-manifest.json` exactly the host customers use,
+   the same one as `APP_ORIGIN` in `functions/.env` (with or without `www.`,
+   not both). The file must load on that host without a redirect.
+2. **Get the fingerprints.** Play Console → your app → **App integrity** →
+   **App signing**. Copy the **SHA-256 certificate fingerprint** of:
+   - the **app signing key** (Google signs the app people download with it), and
+   - the **upload key** (your `android.keystore`, §3), so an APK you install
+     yourself for testing also passes. Before the first upload to Play, get
+     this one with `keytool -list -v -keystore android.keystore -alias android`.
+3. **Edit `public/.well-known/assetlinks.json`.** Replace
+   `REPLACE_WITH_PLAY_APP_SIGNING_SHA256` with the app signing key's
+   fingerprint, and add the upload key's as a second entry in the same list:
+   `"sha256_cert_fingerprints": ["AB:CD:…", "12:34:…"]`. `package_name` must be
+   the `packageId` from `twa-manifest.json`. `node tools/check-deploy.mjs`
+   warns while the placeholder is still there.
+4. **Upload the website again** (`DEPLOY.md`, step 7). The zip from
+   `node tools/package-site.mjs` includes the hidden `.well-known` folder. If
+   you upload by hand, turn on "Show hidden files" in File Manager and check
+   that `public_html/.well-known/assetlinks.json` is there.
+5. **Check it:**
    ```bash
    curl -i https://<domain>/.well-known/assetlinks.json
    ```
-   Expect `200` and `content-type: application/json`.
+   Expect `200`, `content-type: application/json`, and your fingerprints — not
+   a `301` or `302`. Purge Hostinger's CDN cache if you use it.
 
 ---
 
@@ -99,20 +115,53 @@ npm install -g @bubblewrap/cli
 ```
 
 Edit `twa-manifest.json` first: replace every `HOST_DOMAIN` with your real
-domain, and settle on `packageId`. **`packageId` can never change once
-published** — use reverse-DNS on a domain you control, e.g. `ae.sabiramin.cranelifting`.
+domain. **`packageId` can never change once published.** It is
+`Duck.HSE.Portal`; if you change it, change it everywhere it appears:
+`PLAY_PACKAGE_NAME` in `js/subscription-config.js`, `package_name` in
+`.well-known/assetlinks.json`, and `PLAY_PACKAGE_NAME` in `functions/.env`
+(the server's default is `Duck.HSE.Portal`).
+
+Leave `features.playBilling.enabled` and `enableNotifications` both `true`:
+without Play Billing the app cannot sell subscriptions, and Bubblewrap refuses
+Play Billing without notifications. Leave `?src=twa` on `startUrl` and the
+shortcut addresses: it tells the paywall it is inside the app, where only
+Google Play may take payment.
+
+Bubblewrap builds from a copy of `twa-manifest.json` in a folder of its own
+(`bubblewrap init --manifest` wants a web address, not this file):
 
 ```bash
-bubblewrap init --manifest ./twa-manifest.json
+mkdir duck-hse-android
+cp twa-manifest.json duck-hse-android/
+cd duck-hse-android
+bubblewrap doctor
+```
+
+The first time, Bubblewrap offers to download a JDK and the Android SDK — let
+it. Then, **once only**, create the upload key in this folder:
+
+```bash
+keytool -genkeypair -v -keystore android.keystore -alias android -keyalg RSA -keysize 2048 -validity 10000
+```
+
+(`keytool` comes with Java. If the command is not found, use the one in the
+JDK Bubblewrap downloaded, under `~/.bubblewrap/jdk`, in its `bin` folder.)
+**Back that file and its passwords up somewhere you will still have them in
+five years.** Lose the upload key and recovery means a support request to
+Google; there is no self-service fix.
+
+Then generate the Android project and build it:
+
+```bash
+bubblewrap update --skipVersionUpgrade
 bubblewrap build
 ```
 
-On first build it creates `android.keystore`. **Back that file and its passwords
-up somewhere you will still have them in five years.** Lose the upload key and
-recovery means a support request to Google; there is no self-service fix.
-
-Output: `app-release-bundle.aab` (upload this to Play) and `app-release-signed.apk`
-(sideload this to test).
+`update` fetches the icons from your live site, so the website must be up.
+`build` asks for the key passwords. Output: `app-release-bundle.aab` (upload
+this to Play) and `app-release-signed.apk` (sideload this to test). Keep the
+folder: for the next release, copy the updated `twa-manifest.json` over the old
+one and run the same two commands.
 
 Test the APK on a real Android phone before uploading:
 
@@ -121,7 +170,7 @@ adb install -r app-release-signed.apk
 ```
 
 Check, in order:
-- **No address bar at the top.** If there is one, assetlinks verification failed — re-read `.well-known/README.md`.
+- **No address bar at the top.** If there is one, assetlinks verification failed: check §2 (both fingerprints, the host, no redirect).
 - Turn on airplane mode, kill the app, reopen it. It must still work — that's `sw.js` doing its job.
 - Save an assessment offline, then reconnect. The record must survive.
 - The Android back button behaves sensibly.
@@ -130,6 +179,38 @@ Check, in order:
 Then bump `appVersionCode` in `twa-manifest.json` for every subsequent upload —
 Play rejects a reused version code. Keep it in step with `APP_VERSION_CODE` in
 `js/app-version.js` and `CACHE_VERSION` in `sw.js`.
+
+---
+
+## 3a. Google Play subscriptions
+
+Inside the Android app, Google Play's payments policy allows only Google Play
+billing, so the paywall there shows the Play plan and **never** the card
+(Stripe) or invoice options. On the website it is the other way round.
+
+1. **Product:** Play Console → **Monetize → Subscriptions**: create
+   `pro_monthly` with a monthly base plan. The ID must match `PRODUCTS` in
+   `js/subscription-config.js`. The server accepts only the IDs in
+   `PLAY_PRODUCT_IDS` in `functions/.env` (default `pro_monthly`), so add any
+   new ID there too.
+2. **Server access:** follow `SECURITY.md` §6, steps 6–8 (Play Developer API,
+   and the permissions for the Functions service account).
+3. **Real-time developer notifications — required.** A renewal keeps the same
+   purchase token, so this is how renewals, cancellations and refunds reach the
+   account. Follow `SECURITY.md` §6, step 10: grant Google's service account
+   permission to publish to the `play-rtdn` topic, enter the topic in Play
+   Console, and send a test notification.
+4. **Test before release:** Play Console → **Settings → License testing**: add
+   your testers' Google accounts. Install the app **from the internal testing
+   track** (Play Billing needs the copy Google Play installed), then:
+   - The paywall shows the Play price and **no** card or invoice option.
+   - Subscribe with a tester account: the app unlocks.
+   - Tester subscriptions renew every 5 minutes. Without opening the app,
+     watch `users/<uid>` in the Firestore console: `subscriptionExpiryMillis`
+     moves forward at each renewal. That is RTDN working.
+   - Sign out, sign in as a second Duck HSE account on the same phone, tap
+     **Restore purchases**: it must say the subscription is linked to another
+     account. One Play subscription unlocks one account.
 
 ---
 
@@ -294,9 +375,11 @@ wrong description doesn't pay out.
 
 **Technical**
 - [ ] Domain live, HTTPS enforced, site at the domain root
-- [ ] `assetlinks.json` returns 200 with the real SHA-256 fingerprint
+- [ ] `assetlinks.json` returns 200 with the real SHA-256 fingerprints, without a redirect
 - [ ] `APP_VERSION` / `APP_VERSION_CODE` / `CACHE_VERSION` / `twa-manifest.json` all in step
 - [ ] Installed APK opens with **no** address bar
+- [ ] Play Billing on (`twa-manifest.json`), and a license tester bought and renewed a subscription from the internal testing track (§3a)
+- [ ] Real-time developer notifications set up and the test notification arrived (`SECURITY.md` §6, step 10)
 - [ ] Works fully in airplane mode
 - [ ] Tested on a real phone at phone width, not just a resized desktop browser
 - [ ] `js/firebase-config.js` matches the Data Safety answers you submitted
