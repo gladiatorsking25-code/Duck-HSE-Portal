@@ -10,6 +10,11 @@ same account.
 1. On `subscribe.html` the customer picks a plan. The app calls the
    `stripeCreateCheckout` Cloud Function, which creates a Stripe customer
    (once per account) and a Checkout Session, and returns its link.
+   If that customer already has a subscription in Stripe (for example they
+   paid in another tab, or the webhook in step 3 has not arrived), the
+   function writes it to the account and opens the billing portal instead,
+   so nobody is charged twice. An account revoked on `admin.html` cannot
+   start a checkout.
 2. The customer pays on Stripe's own page. **Card details never reach your
    website or Firebase.**
 3. Stripe calls the `stripeWebhook` Cloud Function. It checks Stripe's
@@ -75,8 +80,11 @@ cp .env.example .env
 
 Edit `functions/.env`:
 
-- `APP_ORIGIN`: your website address exactly as customers open it, for example
-  `https://www.your-domain.com` (https, no trailing slash).
+- `APP_ORIGIN`: your site's main address, written exactly like the example in
+  `.env.example`: `https://your-domain.com` (https, no `www.`, no trailing
+  slash). The site sends visitors who type `www.` to this address (see
+  `docs/DEPLOY.md`), and Stripe sends customers back here after they pay. Any
+  other form brings customers back from Stripe signed out.
 - `STRIPE_PRICE_MONTHLY`: the price ID from step 1 (and `STRIPE_PRICE_YEARLY` if
   you made one).
 - `STRIPE_AUTOMATIC_TAX`: leave `false` unless you set up Stripe Tax (see
@@ -95,7 +103,8 @@ firebase functions:secrets:set STRIPE_SECRET_KEY
 
 Safer option: create a **restricted key** instead, with write access to
 *Customers*, *Checkout Sessions* and *Customer portal*, and read access to
-*Subscriptions*. That is all the functions use. If a checkout ever fails with a
+*Subscriptions* (checkout reads them too, to avoid a second subscription).
+That is all the functions use. If a checkout ever fails with a
 permission error, add the permission Stripe names in the function log.
 
 The webhook secret comes from step 5, but the deploy needs it to exist, so set
@@ -158,6 +167,9 @@ made a yearly price, you can also allow switching plans. Save.
 
 ### 8. Go live
 
+Keep the time the public site runs in test mode short: until you go live,
+anyone can unlock the app with the public test card.
+
 Stripe keeps test and live data apart, so repeat in **live mode**:
 
 1. Create the product and price again and put the live `price_…` ID in
@@ -167,6 +179,18 @@ Stripe keeps test and live data apart, so repeat in **live mode**:
    `firebase functions:secrets:set STRIPE_WEBHOOK_SECRET`.
 4. Configure the customer portal in live mode.
 5. `firebase deploy --only functions`.
+6. Clear the test-mode Stripe references. Every account that opened Checkout
+   in test mode (your own test accounts, and anyone who pressed Subscribe
+   while the site was in test mode) still has a test-mode `stripeCustomerId`,
+   and perhaps a `stripeSubscriptionId`, on its `users/{uid}` document. Live
+   mode cannot see them. Checkout replaces a missing customer by itself, but
+   **Manage plan** says "There is no card subscription on this account." until
+   the account subscribes again. For each of those accounts, open Firebase
+   console → **Firestore Database** → `users` → the account, and delete both
+   fields. If the account paid with the test card and still shows a plan, also
+   set `subscriptionStatus` to `expired`.
+7. Test one live payment with a **fresh account** that never used test mode,
+   then cancel it in the billing portal and refund it in Stripe.
 
 ## VAT and tax
 
@@ -190,8 +214,10 @@ accounts by hand from `admin.html`. Set `OFFLINE_PAYMENT.enabled` to `false` in
 | "Payments are not set up yet (APP_ORIGIN)." | `APP_ORIGIN` in `functions/.env` is missing, not https, or has a path. Fix and redeploy. |
 | "Card payments are not set up yet." | `STRIPE_SECRET_KEY` is not set. Step 3, then redeploy. |
 | "That plan is not available." | The plan's `STRIPE_PRICE_…` setting is empty. |
-| Paid, but the app still asks to subscribe | Check the webhook deliveries in Stripe. A `400` means the signing secret is wrong (step 5). A `500` shows the reason in `firebase functions:log --only stripeWebhook`; Stripe retries on its own for up to three days. |
-| The admin page shows a user as `revoked` who is paying | A revoke is not lifted by a payment. Use **Grant** on `admin.html` to restore them, and cancel their subscription in Stripe if they should not be charged. |
+| Paid, but the app still asks to subscribe | Check the webhook deliveries in Stripe. A `400` means the signing secret is wrong (step 5). A `500` shows the reason in `firebase functions:log --only stripeWebhook`; Stripe retries on its own for up to three days. Meanwhile the customer can press **Subscribe** again: they are not charged twice, the app finds the subscription in Stripe, unlocks the account and opens the billing portal. |
+| "There is no card subscription on this account." on **Manage plan** for an account that shows a card plan | Its Stripe customer is not in this Stripe mode, usually a test-mode leftover after going live. Clear it as in **Go live**, item 6. |
+| "This account is suspended. Please contact support." | The account is `revoked` on `admin.html`, so checkout is refused. If they may subscribe again, lift the revoke there with a grant button (**+30d**, **+1y**, **Forever**) or **+14d trial**. |
+| The admin page shows a user as `revoked` who is paying | A revoke is not lifted by a payment. Use **Grant** on `admin.html` to restore them, and cancel their subscription in Stripe if they should not be charged. The billing portal stays open to them for that. |
 
 ## Testing locally
 
