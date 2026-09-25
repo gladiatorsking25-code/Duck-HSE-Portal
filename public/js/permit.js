@@ -76,11 +76,24 @@ if (isNew) {
 }
 
 // A link to a permit that isn't on this device yet (for example a project
-// item opened before sync finishes) must not quietly start a new permit.
+// item opened before sync finishes) must not quietly start a new permit. The
+// page opens it as soon as it arrives from the account.
 if (permitId && isNew) {
   document.getElementById('statusBanner').innerHTML = `<div class="banner banner-warn">
-    <strong>This permit is not on this device.</strong> It may still be syncing from your account, or it belongs to another team member. <a href="permits.html">See all permits</a>.
+    <strong>This permit is not on this device yet.</strong> It may still be syncing from your account, so it will open here as soon as it arrives. If it does not, it may belong to another team member. <a href="permits.html">See all permits</a>.
   </div>`;
+  document.addEventListener('cloudsync:changed', () => {
+    if (DB.getPermits().some(p => p.id === permitId)) location.reload();
+  });
+}
+
+// Saves the permit, then waits for the account and the project to have it
+// (each with a time limit) so leaving the page does not cut the writes off.
+// Resolves false if the permit could not be stored on this device.
+function savePermitAndSync(p) {
+  if (!DB.savePermit(p)) return Promise.resolve(false);
+  const project = syncPermitToProject(p).catch((e) => console.error('Project link failed', e));
+  return Promise.all([project, DB.flush(5000)]).then(() => true);
 }
 
 // ---- Type chooser (new permit with no type yet) ----
@@ -500,8 +513,7 @@ document.getElementById('btnSuspend')?.addEventListener('click', () => {
   permit.ptwSuspendedBy = by;
   permit.suspensionReason = reason;
   permit.suspendedAt = new Date().toISOString();
-  DB.savePermit(permit);
-  syncPermitToProject(permit).then(() => { alert('Permit suspended.'); location.reload(); });
+  savePermitAndSync(permit).then((ok) => { if (!ok) return; alert('Permit suspended.'); location.reload(); });
 });
 
 // Closing saves the permit as it was loaded, so unsaved edits above would be
@@ -547,8 +559,7 @@ document.getElementById('btnClose')?.addEventListener('click', () => {
   if (verifierSig) permit.verifierSignature = verifierSig;
   permit.status = 'closed';
   permit.closeout = closeout;
-  DB.savePermit(permit);
-  syncPermitToProject(permit).then(() => { location.href = `permit.html?id=${encodeURIComponent(permit.id)}&mode=view`; });
+  savePermitAndSync(permit).then((ok) => { if (ok) location.href = `permit.html?id=${encodeURIComponent(permit.id)}&mode=view`; });
 });
 
 // ---- Save ----
@@ -612,7 +623,7 @@ document.getElementById('btnSave').addEventListener('click', () => {
     return;
   }
   errEl.innerHTML = '';
-  if (!data.permitNumber) data.permitNumber = DB.nextPermitNumber(typeKey);
+  if (!data.permitNumber) data.permitNumber = DB.nextPermitNumber(typeKey) || '';
   const failing = issued ? PermitTypes.failingGasReadings(data) : [];
   if (failing.length && PermitTypes.statusOf(data) === 'active') {
     const last = PermitTypes.latestGasTest(data);
@@ -623,8 +634,12 @@ document.getElementById('btnSave').addEventListener('click', () => {
     alert('The latest gas test is outside the limits, so this permit has been suspended. Stop work and make the area safe.');
   }
   permit = data;
-  DB.savePermit(permit);
-  syncPermitToProject(permit).then(() => { location.href = `permit.html?id=${encodeURIComponent(permit.id)}&mode=view`; });
+  const btn = document.getElementById('btnSave');
+  btn.disabled = true;
+  savePermitAndSync(permit).then((ok) => {
+    if (ok) location.href = `permit.html?id=${encodeURIComponent(permit.id)}&mode=view`;
+    else btn.disabled = false;
+  });
 });
 
 // Mirror the permit onto its project's tracked items (see js/project-link.js).

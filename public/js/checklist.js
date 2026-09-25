@@ -560,6 +560,7 @@
     editingId = recordId;
     const persistedCertificates = await persistCertificatePhotos(recordId);
     const rec = DB.saveChecklist(buildRecord(persistedCertificates));
+    if (!rec) return;   // not stored on this device; DB has told the user why
     editingId = rec.id;
     let linkError = '';
     if (rec.projectId && typeof ProjectLink !== 'undefined') {
@@ -782,8 +783,37 @@
     const params = new URLSearchParams(location.search);
     const id = params.get('id');
     if (id && loadRecord(id)) return;
+    if (id) { waitForRecord(id); return; }
     if (typeof ProjectLink !== 'undefined') ProjectLink.mount($('projectId'), null);
     renderSections(); renderCertificateSection();
+  }
+
+  // A link to an inspection that is not on this device yet (for example a
+  // project item opened before sync finishes) must not open a blank form
+  // under that record's address. Say so, and load it once it arrives.
+  function waitForRecord(id) {
+    const content = document.querySelector('.content');
+    const hidden = [];
+    Array.from(content.children).forEach((el) => {
+      if (el.id === 'langSwitch' || el.id === 'app-footer' || el.hidden) return;
+      el.hidden = true;
+      hidden.push(el);
+    });
+    const banner = document.createElement('div');
+    banner.className = 'banner banner-warn';
+    banner.innerHTML = `<div><strong>This inspection is not on this device yet.</strong>
+      It may still be syncing from your account, so it will open here as soon as it arrives.
+      If it does not, it may belong to another team member.
+      <a href="checklists.html">See all inspection records</a> or <a href="checklist.html">start a new inspection</a>.</div>`;
+    content.insertBefore(banner, content.firstChild);
+    const onSync = () => {
+      if (!DB.getChecklists().some(c => c.id === id)) return;
+      document.removeEventListener('cloudsync:changed', onSync);
+      banner.remove();
+      hidden.forEach((el) => { el.hidden = false; });
+      loadRecord(id);
+    };
+    document.addEventListener('cloudsync:changed', onSync);
   }
 
   if (document.readyState === 'loading') {

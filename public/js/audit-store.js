@@ -16,15 +16,26 @@
 (function (global) {
   'use strict';
 
-  const DB_NAME = 'cla_audit_store_v1';
+  const DB_BASE = 'cla_audit_store_v1';
   const DB_VERSION = 1;
   let dbPromise = null;
+  let dbName = null;
+
+  // Each account on a shared device has its own database (see DeviceData in
+  // js/firebase-auth.js), so one person never sees another's audits. If the
+  // account changes while a page is open, the next call opens the new one.
+  function currentName() {
+    return (typeof DeviceData !== 'undefined') ? DeviceData.idbName(DB_BASE) : DB_BASE;
+  }
 
   function open() {
-    if (dbPromise) return dbPromise;
+    const name = currentName();
+    if (dbPromise && dbName === name) return dbPromise;
+    if (dbPromise) dbPromise.then((db) => db.close(), () => {});
+    dbName = name;
     dbPromise = new Promise((resolve, reject) => {
       if (!('indexedDB' in window)) { reject(new Error('This browser has no IndexedDB, so evidence cannot be stored.')); return; }
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      const req = indexedDB.open(name, DB_VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('audits')) db.createObjectStore('audits', { keyPath: 'id' });

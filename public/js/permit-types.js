@@ -128,7 +128,8 @@
   }
 
   // "Other permits for this job" names a permit of the given type, by number
-  // prefix or by name ("CSE-2026-0004", "confined space permit to follow").
+  // prefix or by name ("CSE-2026-K7Q2-0004", "CSE-2026-0004", "confined space
+  // permit to follow").
   const LINK_PATTERNS = {
     confined_space: /\bCSE\b|confined/i,
     hot_work: /\bHW\b|hot work/i,
@@ -788,19 +789,44 @@
   const STATUS_LABELS = { active: 'Active', suspended: 'Suspended', expired: 'Expired', closed: 'Closed' };
 
   // ---- Numbering ------------------------------------------------------------
-  // Numbers look like HW-2026-0007. The next one is one more than the larger
-  // of the stored counter and the highest number already on file for that
-  // prefix and year, so a wiped or new device never reissues a number that
-  // came back from the account.
-  function nextNumber(prefix, year, counter, existingNumbers) {
-    const re = new RegExp('^' + prefix + '-' + year + '-(\\d+)$');
+  // Numbers look like HW-2026-K7Q2-0007: type prefix, year, the issuer's code
+  // and a sequence. The code comes from the issuing account, so two people on
+  // the same project never issue the same number. Numbers issued before codes
+  // existed (HW-2026-0007) stay valid and keep their meaning.
+  //
+  // The next sequence is one more than the larger of the stored counter and
+  // the highest number already on file for that prefix and year (old-style
+  // numbers and this issuer's), so a wiped or new device never reissues a
+  // number that came back from the account, and the sequence carries on from
+  // the old-style numbers instead of starting again at 0001.
+
+  // Four characters from an account id, always starting with a letter. Only
+  // letters and digits that cannot be misread (no I, L, O or U).
+  const CODE_LETTERS = 'ABCDEFGHJKMNPQRSTVWXYZ';
+  const CODE_CHARS = '0123456789' + CODE_LETTERS;
+  function issuerCode(uid) {
+    const s = String(uid || '');
+    if (!s) return '';
+    let h = 0x811c9dc5;   // FNV-1a
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    let code = CODE_LETTERS[h % CODE_LETTERS.length];
+    h = Math.floor(h / CODE_LETTERS.length);
+    for (let i = 0; i < 3; i++) { code += CODE_CHARS[h % CODE_CHARS.length]; h = Math.floor(h / CODE_CHARS.length); }
+    return code;
+  }
+
+  function nextNumber(prefix, year, counter, existingNumbers, code) {
+    const esc = (v) => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const mine = code ? '(?:' + esc(code) + '-)?' : '';
+    const re = new RegExp('^' + esc(prefix) + '-' + year + '-' + mine + '(\\d+)$');
     let max = Number.isFinite(counter) ? counter : 0;
     (existingNumbers || []).forEach((n) => {
       const m = re.exec(String(n || ''));
       if (m) max = Math.max(max, parseInt(m[1], 10));
     });
     const seq = max + 1;
-    return { seq, number: `${prefix}-${year}-${String(seq).padStart(4, '0')}` };
+    const pad = String(seq).padStart(4, '0');
+    return { seq, number: code ? `${prefix}-${year}-${code}-${pad}` : `${prefix}-${year}-${pad}` };
   }
 
   // ---- Reading answers -------------------------------------------------------
@@ -1038,7 +1064,7 @@
   const api = {
     TYPES, DEFAULT_TYPE, STATUS_LABELS,
     byKey, isType, typeKeyOf, typeOf, labelOf, statusOf,
-    nextNumber, checkValue, detailValue, gasProblems, latestGasTest, latestGasRound, latestGasReadings, failingGasReadings,
+    nextNumber, issuerCode, checkValue, detailValue, gasProblems, latestGasTest, latestGasRound, latestGasReadings, failingGasReadings,
     isolationRows, nameOf,
     validate, validateCloseout,
   };
