@@ -10,6 +10,13 @@
 // HTML is rendered in a sandboxed iframe with scripts disabled — a pack's
 // index page is safe to preview, and so is an HTML file of unknown origin.
 //
+// A file's type is worked out from its name (safeType below), never taken from
+// the file record or a pack's manifest. A pack from someone else can label a
+// web page "application/pdf", or a ".pdf" "text/html", and a file opened in a
+// tab runs as part of this site. Only pictures, PDFs, video and audio are shown
+// by the browser itself or offered in a tab; everything else (web pages, SVG,
+// XML, text…) is application/octet-stream, which a browser only downloads.
+//
 //   AuditViewer.open(entries, startIndex, { getBlob: async (entry) => Blob })
 //   entries: [{ name, type, size, label, sublabel, addedAt }]
 
@@ -19,6 +26,21 @@
   const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+  // The only types the viewer hands to the browser. None of them can run a
+  // script as part of this site, even when opened in a tab of its own.
+  const SAFE_TYPES = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+    pdf: 'application/pdf',
+    mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+    mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', wav: 'audio/wav', ogg: 'audio/ogg'
+  };
+  const DOWNLOAD_ONLY = 'application/octet-stream';
+
+  function safeType(name) {
+    const m = /\.([a-z0-9]+)$/.exec(String(name || '').toLowerCase());
+    return m && Object.prototype.hasOwnProperty.call(SAFE_TYPES, m[1]) ? SAFE_TYPES[m[1]] : DOWNLOAD_ONLY;
+  }
+
   function fmtSize(n) {
     if (n == null) return '';
     if (n < 1024) return n + ' B';
@@ -26,13 +48,17 @@
     return (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' MB';
   }
 
+  // How a file is previewed. Pictures, PDFs, video and audio come from the
+  // name only (see safeType); the recorded type can still mark a file as a web
+  // page or text, since those are only ever read by this script, not the browser.
   function kindOf(name, type) {
     const n = String(name || '').toLowerCase();
     const t = String(type || '').toLowerCase();
-    if (/^image\//.test(t) || /\.(jpe?g|png|gif|webp|bmp|svg)$/.test(n)) return 'image';
-    if (t === 'application/pdf' || /\.pdf$/.test(n)) return 'pdf';
-    if (/^video\//.test(t) || /\.(mp4|webm|mov|m4v)$/.test(n)) return 'video';
-    if (/^audio\//.test(t) || /\.(mp3|m4a|wav|ogg|aac)$/.test(n)) return 'audio';
+    const safe = safeType(n);
+    if (/^image\//.test(safe)) return 'image';
+    if (safe === 'application/pdf') return 'pdf';
+    if (/^video\//.test(safe)) return 'video';
+    if (/^audio\//.test(safe)) return 'audio';
     if (/\.(xlsx|xlsm)$/.test(n)) return 'xlsx';
     if (/\.docx$/.test(n)) return 'docx';
     if (/\.html?$/.test(n) || t === 'text/html') return 'html';
@@ -115,11 +141,14 @@
     if (!state || state.index !== index) return; // navigated away meanwhile
     if (!blob) { body.innerHTML = '<div class="viewer-empty">This file is no longer in storage.</div>'; return; }
 
-    const typed = entry.type && blob.type !== entry.type ? new Blob([blob], { type: entry.type }) : blob;
-    state.url = URL.createObjectURL(typed);
+    // Always re-typed from the name: the stored or packed type is not trusted.
+    const type = safeType(entry.name);
+    state.url = URL.createObjectURL(new Blob([blob], { type: type }));
     const dl = root.querySelector('#vwDownload');
     dl.href = state.url; dl.download = entry.name || 'file';
-    root.querySelector('#vwOpen').href = state.url;
+    const openTab = root.querySelector('#vwOpen');
+    if (type === DOWNLOAD_ONLY) { openTab.hidden = true; openTab.removeAttribute('href'); }
+    else { openTab.hidden = false; openTab.href = state.url; }
 
     const kind = kindOf(entry.name, entry.type || blob.type);
     try {
@@ -206,5 +235,5 @@
     setTimeout(() => { const c = root.querySelector('#vwClose'); if (c) c.focus(); }, 30);
   }
 
-  global.AuditViewer = { open: open, close: close, kindOf: kindOf, fmtSize: fmtSize };
+  global.AuditViewer = { open: open, close: close, kindOf: kindOf, safeType: safeType, fmtSize: fmtSize };
 })(window);
