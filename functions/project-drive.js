@@ -6,8 +6,8 @@
 //                        backup bookkeeping
 //   driveUsers/{uid}     space and files one account has added, over all projects
 //   driveTotals/all      space and files every project together has used
-//   driveTrash/{id}      a deleted file's space, given back once Drive's 30-day
-//                        trash has emptied
+//   driveTrash/{id}      a deleted file's or old backup's space, given back once
+//                        Drive's 30-day trash has emptied
 // Readable by members, written only here:
 //   projects/{pid}/files/{id}     one per uploaded file
 //   projects/{pid}/backups/{id}   one per backup (managers can read)
@@ -16,6 +16,7 @@ const F = require('./files');
 
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const BACKUP_GAP_MS = 60 * 1000;
+const MAX_MANUAL_BACKUPS_PER_DAY = 10;
 // The nightly run stops starting new projects after this long, well inside the
 // function's 540-second limit; the rest go first the next night.
 const DAILY_BUDGET_MS = 420 * 1000;
@@ -129,6 +130,20 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     await totalsRef().create({ usedBytes, fileCount }).catch((err) => { if (err.code !== 6) throw err; });
   }
 
+  // The portal-wide ceiling. An account only on the trial may fill just the
+  // first TRIAL_TOTAL_SHARE of it, so the rest stays free for paying accounts.
+  function checkTotal(everyone, size, trial, what) {
+    const { totalQuotaBytes } = cfg();
+    if (everyone + size > totalQuotaBytes) {
+      console.error(`Portal file space is full: ${F.fmtMB(everyone)} of ${F.fmtMB(totalQuotaBytes)} used. Raise DRIVE_TOTAL_QUOTA_MB if the shared drive has room.`);
+      throw new F.FileError('resource-exhausted', F.totalQuotaMessage(what));
+    }
+    if (trial && everyone + size > totalQuotaBytes * F.TRIAL_TOTAL_SHARE) {
+      console.warn(`Trial accounts' share of the portal file space is full: ${F.fmtMB(everyone)} of ${F.fmtMB(totalQuotaBytes)} used.`);
+      throw new F.FileError('resource-exhausted', F.trialTotalMessage());
+    }
+  }
+
   // `emailVerified` comes from the caller's sign-in token. Accounts are free
   // to make, so only a confirmed address may add files, a free trial gets a
   // small personal space, and the whole portal has a ceiling.
@@ -138,7 +153,7 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     const project = await getProject(projectId);
     const buf = decode(data);
     const usage = (await foldersRef(projectId).get()).data() || {};
-    const { quotaBytes, userQuotaBytes, trialQuotaBytes, totalQuotaBytes } = cfg();
+    const { quotaBytes, userQuotaBytes, trialQuotaBytes } = cfg();
     const plan = F.planUpload(project, uid, input, buf, usage, quotaBytes);
     if (plan.itemId && !(await projectRef(projectId).collection('items').doc(plan.itemId).get()).exists) {
       bad('That item was not found. It may have been deleted.');
@@ -162,11 +177,7 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
         bad(personal.trial ? F.trialQuotaMessage(mine, personal.bytes) : F.userQuotaMessage(mine, personal.bytes));
       }
       if (Number(u.fileCount || 0) >= F.MAX_FILES_PER_USER) bad(F.userQuotaMessage(mine, personal.bytes));
-      const everyone = Number(all.usedBytes || 0);
-      if (everyone + plan.size > totalQuotaBytes) {
-        console.error(`Portal file space is full: ${F.fmtMB(everyone)} of ${F.fmtMB(totalQuotaBytes)} used. Raise DRIVE_TOTAL_QUOTA_MB if the shared drive has room.`);
-        throw new F.FileError('resource-exhausted', F.totalQuotaMessage());
-      }
+      checkTotal(Number(all.usedBytes || 0), plan.size, personal.trial);
       tx.set(foldersRef(projectId), { usedBytes: inc(plan.size), fileCount: inc(1) }, { merge: true });
       tx.set(userRef(uid), { usedBytes: inc(plan.size), fileCount: inc(1) }, { merge: true });
       tx.set(totalsRef(), { usedBytes: inc(plan.size), fileCount: inc(1) }, { merge: true });
@@ -242,10 +253,12 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     return { deleted: true };
   }
 
-  // Give back the space of files deleted more than 30 days ago. A deleted
-  // account's count is not brought back, and the portal's count is lowered
-  // only once it exists (until then ensureTotals() counts from the projects,
-  // which are lowered here).
+  // Give back the space of files and backups deleted more than 30 days ago. A
+  // deleted account's count is not brought back, and the portal's count is
+  // lowered only once it exists (until then ensureTotals() counts from the
+  // projects, which are lowered here). A project whose driveFolders record is
+  // gone was taken off the portal's count when it was deleted, so only the
+  // uploader's count is lowered. A backup has no uploader and no file count.
   async function releaseTrash() {
     const due = await db.collection('driveTrash').where('releaseAt', '<=', now()).limit(2000).get();
     let released = 0;
@@ -255,11 +268,15 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
         if (!s.exists) return;
         const t = s.data();
         const person = t.uid ? await tx.get(userRef(t.uid)) : null;
+        const folder = await tx.get(foldersRef(t.pid));
         const totals = await tx.get(totalsRef());
+        const less = t.backup ? { usedBytes: inc(-t.size) } : { usedBytes: inc(-t.size), fileCount: inc(-1) };
         tx.delete(d.ref);
-        tx.set(foldersRef(t.pid), { usedBytes: inc(-t.size), fileCount: inc(-1) }, { merge: true });
-        if (person && person.exists) tx.set(userRef(t.uid), { usedBytes: inc(-t.size), fileCount: inc(-1) }, { merge: true });
-        if (totals.exists) tx.set(totalsRef(), { usedBytes: inc(-t.size), fileCount: inc(-1) }, { merge: true });
+        if (person && person.exists) tx.set(userRef(t.uid), less, { merge: true });
+        if (folder.exists) {
+          tx.set(foldersRef(t.pid), less, { merge: true });
+          if (totals.exists) tx.set(totalsRef(), less, { merge: true });
+        }
         released++;
       });
     }
@@ -295,14 +312,18 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     });
     const json = Buffer.from(JSON.stringify(backup));
     const name = F.backupName(project, at, kind);
-    const stored = await drive.upload({
-      name, mimeType: 'application/json', parentId: folders.backupsFolderId, data: json,
-      appProperties: { duckProjectId: projectId, duckBackupKind: kind }
-    });
+    const release = await reserveBackup(projectId, json.length, uid);
+    let stored;
+    try {
+      stored = await drive.upload({
+        name, mimeType: 'application/json', parentId: folders.backupsFolderId, data: json,
+        appProperties: { duckProjectId: projectId, duckBackupKind: kind }
+      });
+    } catch (err) { await release().catch(() => {}); throw err; }
     const bRef = pRef.collection('backups').doc();
     const batch = db.batch();
     batch.set(bRef, {
-      name, kind, size: json.length, itemCount: items.length, fileCount: files.length,
+      name, kind, size: json.length, counted: true, itemCount: items.length, fileCount: files.length,
       fingerprint: backup.fingerprint, driveFileId: stored.id,
       createdAt: FieldValue.serverTimestamp(), createdAtMs: at, createdBy: uid || '', createdByEmail: email || ''
     });
@@ -311,33 +332,85 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
       batch.set(pRef.collection('activity').doc(), activity(uid, email, 'project.backup',
         `Backed up the project (${items.length} item${items.length === 1 ? '' : 's'}, ${files.length} file${files.length === 1 ? '' : 's'})`));
     }
-    await batch.commit();
+    try { await batch.commit(); } catch (err) {
+      await drive.trash(stored.id).catch(() => {});
+      await release().catch(() => {});
+      throw err;
+    }
     await prune(projectId);
     return { id: bRef.id, name, skipped: false };
+  }
+
+  // Backups use the shared drive too, so they count towards the project's and
+  // the portal's space (never a person's) and, like uploads, reserve it before
+  // uploading. The nightly run has no caller; a manual backup or restore point
+  // by an account only on the trial must leave the paying accounts' share.
+  // Returns a function that gives the space back.
+  async function reserveBackup(projectId, size, uid) {
+    await ensureTotals();
+    const { userQuotaBytes, trialQuotaBytes } = cfg();
+    await db.runTransaction(async (tx) => {
+      const account = uid ? (await tx.get(db.collection('users').doc(uid))).data() || {} : null;
+      const all = (await tx.get(totalsRef())).data() || {};
+      const trial = !!account && F.personalQuota(account, { userQuotaBytes, trialQuotaBytes }, now()).trial;
+      checkTotal(Number(all.usedBytes || 0), size, trial, 'the project cannot be backed up');
+      tx.set(foldersRef(projectId), { usedBytes: inc(size) }, { merge: true });
+      tx.set(totalsRef(), { usedBytes: inc(size) }, { merge: true });
+    });
+    return () => {
+      const batch = db.batch();
+      batch.set(foldersRef(projectId), { usedBytes: inc(-size) }, { merge: true });
+      batch.set(totalsRef(), { usedBytes: inc(-size) }, { merge: true });
+      return batch.commit();
+    };
   }
 
   async function prune(projectId) {
     const col = projectRef(projectId).collection('backups');
     const list = (await col.get()).docs.map((d) => Object.assign({ id: d.id }, d.data()));
     for (const b of F.backupsToPrune(list)) {
-      await col.doc(b.id).delete();
-      await drive.trash(b.driveFileId).catch((err) => console.warn('Could not trash old backup', b.driveFileId, err.message));
+      // A trashed backup keeps using space for 30 days, like a deleted file.
+      // Backups made before they were counted are not given back. The record
+      // goes in a transaction, so a nightly and a manual run pruning at once
+      // give the space back only once.
+      const gone = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(col.doc(b.id));
+        if (!snap.exists) return false;
+        tx.delete(snap.ref);
+        if (snap.data().counted) {
+          tx.set(db.collection('driveTrash').doc(), {
+            pid: projectId, uid: '', size: Number(snap.data().size || 0), driveFileId: b.driveFileId || '',
+            releaseAt: now() + F.TRASH_HOLD_MS, backup: true
+          });
+        }
+        return true;
+      });
+      if (gone) await drive.trash(b.driveFileId).catch((err) => console.warn('Could not trash old backup', b.driveFileId, err.message));
     }
   }
 
-  // At most one manual backup, and one restore, per project per minute. The
-  // claim is a transaction, so clicks from several devices cannot all pass.
+  // At most one manual backup, and one restore, per project per minute, and
+  // ten of them together per project per UTC day (a restore backs up first).
+  // The claim is a transaction, so clicks from several devices cannot all pass.
   async function claimSlot(projectId, field, message) {
     await db.runTransaction(async (tx) => {
       const ref = foldersRef(projectId);
-      const last = Number(((await tx.get(ref)).data() || {})[field] || 0);
-      if (now() - last < BACKUP_GAP_MS) bad(message);
-      tx.set(ref, { [field]: now() }, { merge: true });
+      const d = (await tx.get(ref)).data() || {};
+      if (now() - Number(d[field] || 0) < BACKUP_GAP_MS) bad(message);
+      const day = new Date(now()).toISOString().slice(0, 10);
+      const count = d.manualBackupDay === day ? Number(d.manualBackupCount || 0) : 0;
+      if (count >= MAX_MANUAL_BACKUPS_PER_DAY) {
+        bad(`This project has been backed up or restored ${MAX_MANUAL_BACKUPS_PER_DAY} times today, the most allowed in one day. Try again after 04:00 UAE time.`);
+      }
+      tx.set(ref, { [field]: now(), manualBackupDay: day, manualBackupCount: count + 1 }, { merge: true });
     });
   }
 
-  async function backupNow({ uid, email, projectId }) {
+  // `emailVerified` comes from the caller's sign-in token, as for uploads:
+  // backups take space in the shared drive too.
+  async function backupNow({ uid, email, emailVerified, projectId }) {
     requireRoot();
+    if (emailVerified !== true) throw new F.FileError('failed-precondition', F.verifyEmailMessage('backing up a project'));
     const project = await getProject(projectId);
     if (!F.atLeast(project, uid, 'manager')) deny('Only the owner or a manager can back up the project.');
     await claimSlot(projectId, 'lastManualClaimAt', 'A backup was made less than a minute ago.');
@@ -361,8 +434,9 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     return { name: meta.name, mimeType: 'application/json', size: buf.length, data: buf.toString('base64') };
   }
 
-  async function restoreItems({ uid, email, projectId, backupId }) {
+  async function restoreItems({ uid, email, emailVerified, projectId, backupId }) {
     requireRoot();
+    if (emailVerified !== true) throw new F.FileError('failed-precondition', F.verifyEmailMessage('restoring a backup'));
     const project = await getProject(projectId);
     if (!F.atLeast(project, uid, 'manager')) deny('Only the owner or a manager can restore a backup.');
     if (project.status === 'archived') bad('This project is archived. Change its status before restoring.');
