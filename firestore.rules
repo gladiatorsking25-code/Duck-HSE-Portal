@@ -3,7 +3,8 @@
 //   firebase deploy --only firestore:rules
 //
 // What these enforce:
-//   1. A user only ever reads/writes their own data (users/{uid}/...).
+//   1. A user only ever reads/writes their own data (users/{uid}/...), and on
+//      their own users doc only their name and consent record.
 //   2. PAID and ADMIN entitlement (an active/comped subscription, an expiry, an
 //      admin grant, or the admin role) is NEVER client-writable — only the Cloud
 //      Functions (Admin SDK) or a verified Play purchase can set those.
@@ -27,7 +28,8 @@ service cloud.firestore {
     // Server-enforced paywall. Mirrors computeAccess() in js/entitlements.js:
     // admin → manual grant → paid subscription → running trial. A revoked
     // account is locked whatever its other fields say. Used to gate WRITES to
-    // shared project data; a lapsed member can still read and export.
+    // shared project data and personal records; a lapsed account can still
+    // read and export.
     function hasAccess() {
       let path = /databases/$(database)/documents/users/$(request.auth.uid);
       let now = request.time.toMillis();
@@ -55,9 +57,20 @@ service cloud.firestore {
     function trialKeys() {
       return ['subscriptionStatus', 'trialStartedAt', 'trialEndsAt'];
     }
-    // Every entitlement field (paid + admin + trial), for the "plain profile" test.
-    function allEntitlementKeys() {
-      return protectedKeys().concat(trialKeys());
+
+    // The only other fields a client may write on its own users doc. Email and
+    // createdAt are set by the server (onUserCreate) and shown to the admin, so
+    // they stay out of reach, as does anything else.
+    function profileKeys() {
+      return ['displayName', 'consentVersion', 'consentAcceptedAt'];
+    }
+    // `keys` are the fields being written; each must be one of profileKeys()
+    // and hold a sensible value. The consent time is the server's clock.
+    function profileOk(d, keys) {
+      return keys.hasOnly(profileKeys())
+        && ( !keys.hasAny(['displayName']) || shortText(d.displayName, 200) )
+        && ( !keys.hasAny(['consentVersion']) || shortText(d.consentVersion, 40) )
+        && ( !keys.hasAny(['consentAcceptedAt']) || d.consentAcceptedAt == request.time );
     }
 
     function changed() {
@@ -71,22 +84,30 @@ service cloud.firestore {
         && request.resource.data.trialEndsAt > request.time.toMillis()
         && request.resource.data.trialEndsAt <= request.time.toMillis() + 1296000000;
     }
+    // A deleted personal record: the app replaces it with exactly
+    // { deleted: true, updatedAt: <ms> } so other devices learn it is gone.
+    function isTombstone() {
+      return request.resource.data.keys().hasAll(['deleted', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['deleted', 'updatedAt'])
+        && request.resource.data.deleted == true
+        && request.resource.data.updatedAt is number;
+    }
 
     match /users/{uid} {
       allow get:  if isOwner(uid) || isAdmin();
       allow list: if isAdmin();
 
-      // Create: a plain profile doc (no entitlement fields at all), OR a one-time
-      // trial doc holding only the trial fields.
+      // Create: a plain profile doc (profile fields only), OR a one-time trial
+      // doc holding only the trial fields.
       allow create: if isOwner(uid) && (
-             !request.resource.data.keys().hasAny(allEntitlementKeys())
+             profileOk(request.resource.data, request.resource.data.keys())
           || ( request.resource.data.keys().hasOnly(trialKeys()) && trialWindowOk() )
       );
 
-      // Update: touches neither paid/admin nor trial fields, OR a one-time trial
+      // Update: profile fields only (name, consent), OR a one-time trial
       // bootstrap on an account that has no trial yet.
       allow update: if isOwner(uid) && (
-             ( !changed().hasAny(protectedKeys()) && !changed().hasAny(trialKeys()) )
+             profileOk(request.resource.data, changed())
           || ( !('trialEndsAt' in resource.data)
                && changed().hasOnly(trialKeys())
                && trialWindowOk() )
@@ -94,9 +115,22 @@ service cloud.firestore {
 
       allow delete: if false;
 
-      match /assessments/{docId} { allow read, write: if isOwner(uid); }
-      match /permits/{docId}     { allow read, write: if isOwner(uid); }
-      match /checklists/{docId}  { allow read, write: if isOwner(uid); }
+      // Personal records synced from the app. Saving needs a current
+      // subscription or trial; reading, deleting and marking a record deleted
+      // (a tombstone: exactly { deleted: true, updatedAt: <number> }) do not,
+      // so a lapsed account can still see, export and tidy up its own records.
+      match /assessments/{docId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && (isTombstone() || hasAccess());
+      }
+      match /permits/{docId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && (isTombstone() || hasAccess());
+      }
+      match /checklists/{docId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && (isTombstone() || hasAccess());
+      }
     }
 
     // ---- Projects (shared between team members) ---------------------------
@@ -213,7 +247,9 @@ service cloud.firestore {
           && request.resource.data.uid == request.auth.uid
           && request.resource.data.action in ['project.create', 'project.update',
                'item.create', 'item.update', 'item.close', 'item.reopen', 'item.delete']
-          && shortText(request.resource.data.get('email', ''), 254)
+          // The name shown beside the entry: the caller's own sign-in email
+          // (or none), so nobody can post a line as another team member.
+          && request.resource.data.get('email', '') == request.auth.token.get('email', '')
           && shortText(request.resource.data.get('itemId', ''), 80)
           && shortText(request.resource.data.get('summary', ''), 300);
         allow update, delete: if false;
@@ -236,11 +272,12 @@ service cloud.firestore {
     // Written only by Cloud Functions (Admin SDK); no client access.
     match /purchaseTokens/{token} { allow read, write: if false; }
     // Project files bookkeeping: each project's Drive folder ids and space
-    // used, each account's space used, and deleted files waiting for Drive's
-    // trash to empty. Server only.
+    // used, each account's space used, deleted files waiting for Drive's
+    // trash to empty, and the space used by the whole portal. Server only.
     match /driveFolders/{pid}     { allow read, write: if false; }
     match /driveUsers/{uid}       { allow read, write: if false; }
     match /driveTrash/{id}        { allow read, write: if false; }
+    match /driveTotals/{id}       { allow read, write: if false; }
     match /adminLog/{id}          { allow read: if isAdmin(); allow write: if false; }
 
     // Explicit default-deny for everything else.
