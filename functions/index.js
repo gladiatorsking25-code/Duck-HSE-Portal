@@ -500,7 +500,8 @@ exports.projectFileUpload = functions.runWith(FILE_RUN).https.onCall(async (data
     const uid = await assertSubscribed(context, 'add files');
     const d = data || {};
     return await projectDrive().uploadFile({
-      uid, email: context.auth.token.email, projectId: d.projectId, data: d.data,
+      uid, email: context.auth.token.email, emailVerified: context.auth.token.email_verified === true,
+      projectId: d.projectId, data: d.data,
       input: { name: d.name, size: d.size, category: d.category, note: d.note, itemId: d.itemId }
     });
   } catch (err) { throw fileError(err); }

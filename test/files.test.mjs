@@ -98,6 +98,33 @@ test('limit messages say that deleted files still count for 30 days', () => {
   assert.match(F.userQuotaMessage(0, 10 * 1048576), /across your projects.*10 MB.*20000 files/);
 });
 
+test('a free trial gets the small personal space; paying, a grant or the admin role get the full one', () => {
+  const now = Date.UTC(2026, 8, 24);
+  const limits = { userQuotaBytes: 10240 * 1048576, trialQuotaBytes: 200 * 1048576 };
+  const quota = (u) => F.personalQuota(u, limits, now);
+  const full = { bytes: limits.userQuotaBytes, trial: false };
+  const trial = { bytes: limits.trialQuotaBytes, trial: true };
+  assert.deepEqual(quota({ subscriptionStatus: 'trial', trialEndsAt: now + 86400000 }), trial);
+  assert.deepEqual(quota(undefined), trial);
+  assert.deepEqual(quota({ subscriptionStatus: 'active', subscriptionExpiryMillis: now + 1 }), full);
+  assert.deepEqual(quota({ subscriptionStatus: 'in_grace', subscriptionExpiryMillis: now + 1 }), full);
+  assert.deepEqual(quota({ subscriptionStatus: 'active', subscriptionExpiryMillis: now - 1 }), trial);
+  assert.deepEqual(quota({ subscriptionStatus: 'comped', compForever: true }), full);
+  assert.deepEqual(quota({ subscriptionStatus: 'comped', adminGrantUntil: now + 1 }), full);
+  assert.deepEqual(quota({ role: 'admin' }), full);
+  assert.deepEqual(quota({ subscriptionStatus: 'revoked', compForever: true }), trial);
+  // The trial never gets more than the full space.
+  assert.deepEqual(F.personalQuota({}, { userQuotaBytes: 1048576, trialQuotaBytes: 200 * 1048576 }, now), { bytes: 1048576, trial: false });
+  assert.equal(F.DEFAULT_TRIAL_QUOTA_MB, 200);
+  assert.equal(F.DEFAULT_TOTAL_QUOTA_MB, 102400);
+});
+
+test('trial, portal-full and verify-email messages are plain and say what to do', () => {
+  assert.match(F.trialQuotaMessage(150 * 1048576, 200 * 1048576), /free trial each person can add up to 200 MB of files, and you have added 150 MB.*30 days.*Subscribe to add more/);
+  assert.match(F.totalQuotaMessage(), /file storage is full.*portal owner/);
+  assert.match(F.verifyEmailMessage(), /Verify your email address before adding files/);
+});
+
 test('a link to a tracked item must look like an item id', () => {
   assert.equal(upload('ed', { name: 'a.pdf', itemId: 'abc123' }, PDF).itemId, 'abc123');
   refuses(() => upload('ed', { name: 'a.pdf', itemId: '../x' }, PDF), /item was not found/);
