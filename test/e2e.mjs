@@ -354,8 +354,11 @@ try {
   await alice.click('#btnSave');
   await alice.waitForURL(/permit\.html\?id=.*mode=view/, { timeout: 15000 });
   const year = new Date().getFullYear();
-  assert.equal(await alice.inputValue('#permitNumber'), `CSE-${year}-0001`);
-  assert.match(await alice.textContent('#pageTitle'), new RegExp(`Confined space.*CSE-${year}-0001`, 'i'));
+  // Numbers carry the issuer's code, so two people never issue the same one.
+  const code = await alice.evaluate(() => PermitTypes.issuerCode(firebase.auth().currentUser.uid));
+  assert.match(code, /^[A-Z][0-9A-Z]{3}$/);
+  assert.equal(await alice.inputValue('#permitNumber'), `CSE-${year}-${code}-0001`);
+  assert.match(await alice.textContent('#pageTitle'), new RegExp(`Confined space.*CSE-${year}-${code}-0001`, 'i'));
   step('Confined space permit: blocked by low oxygen, issued after a good reading');
 
   // Printed, the gas table fits an A4 page instead of losing its right-hand columns.
@@ -372,7 +375,7 @@ try {
 
   await alice.goto(BASE + 'permits.html');
   await alice.waitForSelector('#tableWrap tbody tr:nth-child(2)');
-  assert.match(await alice.textContent('#tableWrap'), new RegExp(`CSE-${year}-0001[\\s\\S]*Confined space`, 'i'));
+  assert.match(await alice.textContent('#tableWrap'), new RegExp(`CSE-${year}-${code}-0001[\\s\\S]*Confined space`, 'i'));
   if (process.env.E2E_SHOTS) {
     await alice.setViewportSize({ width: 1366, height: 900 });
     await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'permits-list.png'), fullPage: true });
@@ -400,7 +403,7 @@ try {
     return snap.docs.map((d) => d.data()).find((d) => /Confined space/i.test(d.title));
   }, pid);
   assert.ok(item, 'permit tracked on the project');
-  assert.match(item.title, new RegExp(`CSE-${year}-0001`));
+  assert.match(item.title, new RegExp(`CSE-${year}-${code}-0001`));
   assert.equal(item.status, 'in_progress');
   assert.equal(item.priority, 'high');
   step('Permit list, dashboard and project show the permit type');
@@ -495,6 +498,81 @@ try {
   await alice.waitForSelector('#wipeSignedOut:not([hidden])');
   step('Erasing needs the password, then wipes the device and signs out');
 
+  // 12. Records come back from the account after an erase, inspections too.
+  async function signInAs(page, email) {
+    await page.goto(BASE + 'login.html');
+    await page.waitForSelector('#cloudSection:not([hidden])');
+    await page.fill('#cloudEmail', email);
+    await page.fill('#cloudPassword', 'correct-horse-battery');
+    await page.click('#cloudSubmitBtn');
+    await page.waitForFunction(() => location.pathname.endsWith('index.html'), null, { timeout: 20000 });
+    return (await page.waitForFunction(() => typeof firebase !== 'undefined' && firebase.apps.length
+      && firebase.auth().currentUser && firebase.auth().currentUser.uid, null, { timeout: 20000 })).jsonValue();
+  }
+  // Signing out can navigate twice (the sign-out and the auth watch), so wait
+  // for the login page to settle rather than for one navigation.
+  async function signOutOf(page) {
+    await page.evaluate(() => { Access.signOut(); });
+    await page.waitForFunction(() => location.pathname.endsWith('login.html') && document.readyState === 'complete', null, { timeout: 15000 });
+    await page.waitForTimeout(500);
+  }
+  await signInAs(alice, 'alice@example.com');
+  await alice.waitForFunction(() => /FL-07/.test(document.getElementById('recent-records').textContent), null, { timeout: 20000 });
+  assert.ok(await alice.evaluate(() => DB.getPermits().some((p) => p.permitType === 'confined_space')), 'permits come back too');
+  step('After an erase, signing in brings inspections and permits back from the account');
+
+  // 13. Links to one record open it, or say it is not on this device yet.
+  const assessor = '<img src=x onerror="window.__xss3=1">A. Assessor';
+  const aid = await alice.evaluate((name) => DB.saveAssessment({
+    date: new Date().toISOString(), craneModel: Object.keys(CRANE_DATA)[0], configuration: '<b>cfg</b>',
+    loadWeight: 12.5, windSpeed: 4, utilization: 40, isValid: true, assessorName: name
+  }).id, assessor);
+  await alice.goto(BASE + 'history.html?id=' + encodeURIComponent(aid));
+  await alice.waitForSelector('#adModal');
+  assert.ok((await alice.textContent('#tableWrap')).includes('<img src=x'), 'assessor name shown as text');
+  assert.equal(await alice.evaluate(() => window.__xss3), undefined);
+  await alice.goto(BASE + 'history.html?id=A-not-here');
+  await alice.waitForFunction(() => /not on this device yet/.test(document.getElementById('statusBanner').textContent));
+  await alice.goto(BASE + 'checklist.html?id=C-not-here');
+  await alice.waitForFunction(() => /not on this device yet/.test(document.querySelector('.content').textContent));
+  assert.equal(await alice.isVisible('#btnSave'), false, 'no blank form under a record link');
+  step('Record links open the record, or say it is not on this device yet');
+
+  // 14. A shared device: Bob signs in on Alice's device. He sees none of her
+  // records, his own are kept apart, and hers are all back when she returns.
+  await signOutOf(alice);
+  const bobUid = await signInAs(alice, 'bob@example.com');
+  assert.equal(await alice.evaluate(() => DB.getChecklists().length + DB.getPermits().length + DB.getAssessments().length), 0, 'none of Alice\'s records');
+  assert.match(await alice.textContent('#recent-records'), /No records yet/);
+  assert.equal(await alice.evaluate(() => DeviceData.idbName('cla_audit_store_v1')), 'cla_audit_store_v1:' + bobUid, 'Bob has his own evidence store');
+  await alice.evaluate(() => DB.saveChecklist({
+    equipmentType: EQUIPMENT_TYPES[0].id, assetNo: 'BOB-1', inspectionDate: '2026-08-02',
+    nextDue: '2027-08-02', verdict: 'fit', savedAt: new Date().toISOString()
+  }));
+  await alice.evaluate(() => DB.flush(5000));
+  await signOutOf(alice);
+  await signInAs(alice, 'alice@example.com');
+  await alice.waitForFunction(() => /FL-07/.test(document.getElementById('recent-records').textContent), null, { timeout: 20000 });
+  assert.equal(await alice.evaluate(() => DB.getChecklists().some((c) => c.assetNo === 'BOB-1')), false, 'Bob\'s record stays his');
+  assert.equal(await alice.evaluate(() => DB.getAssessments().length), 1, 'Alice\'s assessment is back');
+  assert.equal(await alice.evaluate(() => DeviceData.idbName('cla_audit_store_v1')), 'cla_audit_store_v1');
+  step('On a shared device each account sees only its own records, and nothing is lost');
+
+  // 15. A second device gets Alice's records, and a delete made there
+  // reaches this device instead of coming back.
+  const alice2 = await newUser();
+  await signInAs(alice2, 'alice@example.com');
+  await alice2.waitForFunction(() => /FL-07/.test(document.getElementById('recent-records').textContent), null, { timeout: 20000 });
+  await alice.goto(BASE + 'checklists.html');
+  await alice.waitForFunction(() => /FL-07/.test(document.getElementById('tableWrap').textContent), null, { timeout: 15000 });
+  await alice2.evaluate(() => DB.deleteChecklist(DB.getChecklists().find((c) => c.assetNo === 'FL-07').id));
+  await alice.waitForFunction(() => !/FL-07/.test(document.getElementById('tableWrap').textContent), null, { timeout: 20000 });
+  await alice.reload();
+  await alice.waitForFunction(() => typeof firebase !== 'undefined' && firebase.apps.length && firebase.auth().currentUser, null, { timeout: 20000 });
+  await alice.waitForTimeout(2000);   // time for the account's copy to be merged again
+  assert.equal(await alice.evaluate(() => DB.getChecklists().some((c) => c.assetNo === 'FL-07')), false, 'the delete does not come back');
+  assert.deepEqual(alice2.errors, [], 'second device page errors');
+  step('Records reach a second device, and deletes made there reach this one');
 
   for (const [name, p] of [['alice', alice], ['bob', bob], ['visitor', visitor]]) {
     assert.deepEqual(p.errors, [], `${name} page errors`);

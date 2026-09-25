@@ -28,6 +28,14 @@ if (FIREBASE_READY) {
       if (i >= scripts.length) {
         try {
           firebase.initializeApp(FIREBASE_CONFIG);
+          // Keep the account's records and any unsent writes in IndexedDB, so
+          // a save made offline survives leaving the page and is sent when the
+          // device is back online. Best effort: some browsers (private
+          // windows) refuse it, and Firestore then keeps them in memory only.
+          try {
+            firebase.firestore().enablePersistence({ synchronizeTabs: true })
+              .catch((err) => console.warn('Offline copy of the account is not available here', err && err.code));
+          } catch (e) { /* not available */ }
           resolve(firebase);
         } catch (e) { reject(e); }
         return;
