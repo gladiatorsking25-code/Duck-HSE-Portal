@@ -10,6 +10,10 @@
   const $ = (id) => document.getElementById(id);
   const DAY = 86400000;
   let allUsers = [];
+  // The list holds the newest 500 accounts. An older one is looked up by its
+  // full address (searchAll), and again whenever the list reloads, until the
+  // search changes.
+  let lookedUp = null;
 
   function esc(v) {
     return String(v == null ? '' : v)
@@ -51,10 +55,31 @@
     try {
       const data = await call('adminListUsers', { limit: 500 });
       allUsers = data.users || [];
+      if (lookedUp) {
+        try { if (!(await addByEmail(lookedUp))) lookedUp = null; } catch (e) { /* message already shown */ }
+      }
       render();
     } catch (e) {
       $('adminTable').innerHTML = '';
     }
+  }
+
+  // Adds (or refreshes) the row of the account that signs in with `email`.
+  // Returns whether there is one.
+  async function addByEmail(email) {
+    const data = await call('adminListUsers', { email });
+    const found = data.users || [];
+    found.forEach((u) => { allUsers = allUsers.filter((x) => x.uid !== u.uid).concat(u); });
+    return found.length > 0;
+  }
+
+  async function searchAll() {
+    const q = ($('adminSearch').value || '').trim();
+    if (!q.includes('@')) { note('warn', 'Type the account\'s full email address to search all accounts.'); return; }
+    try {
+      if (await addByEmail(q)) { lookedUp = q; render(); }
+      else note('warn', `No account signs in with ${q}.`);
+    } catch (e) { /* message already shown */ }
   }
 
   async function act(uid, action, untilMillis) {
@@ -116,7 +141,10 @@
       if (!q) return true;
       return `${u.email || ''} ${u.uid} ${u.subscriptionStatus || ''} ${u.role || ''}`.toLowerCase().includes(q);
     });
-    if (!list.length) { $('adminTable').innerHTML = '<div class="card empty-state">No users match.</div>'; return; }
+    if (!list.length) {
+      $('adminTable').innerHTML = `<div class="card empty-state">No users match.${q ? ' The list shows the newest 500 accounts: for an older one, type its full email address and press Enter or <strong>Search all accounts</strong>.' : ''}</div>`;
+      return;
+    }
 
     $('adminTable').innerHTML = `
       <table class="data-table">
@@ -194,7 +222,9 @@
     $('adminGate').innerHTML = '';
     $('adminBody').hidden = false;
     $('adminRefresh').addEventListener('click', load);
-    $('adminSearch').addEventListener('input', render);
+    $('adminSearch').addEventListener('input', () => { lookedUp = null; render(); });
+    $('adminSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter' && $('adminSearch').value.includes('@')) searchAll(); });
+    $('adminSearchAll').addEventListener('click', searchAll);
     load();
   });
 })();

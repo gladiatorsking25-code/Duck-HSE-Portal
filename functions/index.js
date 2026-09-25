@@ -213,11 +213,45 @@ async function signInsFor(uids) {
   return out;
 }
 
-// List accounts for the admin dashboard (paged). The email shown is the one
-// the person signs in with, from Firebase Auth, never the copy in their users
-// doc. createdAt is set by onUserCreate and the rules keep clients off it.
+// One row of the admin list: `u` is the users doc ({} when there is none),
+// `signIn` the Firebase Auth record (none when it was deleted).
+function userRow(uid, u, signIn) {
+  return {
+    uid,
+    email: (signIn && signIn.email) || null,
+    emailVerified: !!(signIn && signIn.emailVerified),
+    signInDeleted: !signIn,
+    role: u.role || 'user',
+    subscriptionStatus: u.subscriptionStatus || null,
+    trialEndsAt: u.trialEndsAt || null,
+    subscriptionExpiryMillis: u.subscriptionExpiryMillis || null,
+    adminGrantUntil: u.adminGrantUntil || null,
+    compForever: !!u.compForever,
+    subscriptionProvider: u.subscriptionProvider || null,
+    cancelAtPeriodEnd: !!u.cancelAtPeriodEnd,
+    createdAt: u.createdAt && u.createdAt.toMillis ? u.createdAt.toMillis() : null
+  };
+}
+
+// List accounts for the admin dashboard (paged), or with data.email the one
+// account that signs in with that address, however old. The email shown is
+// the one the person signs in with, from Firebase Auth, never the copy in
+// their users doc. createdAt is set by onUserCreate and the rules keep
+// clients off it.
 exports.adminListUsers = functions.https.onCall(async (data, context) => {
   await assertAdmin(context);
+  if (data && data.email != null) {
+    const email = normEmail(data.email);
+    if (!email || email.length > 320) return { users: [], count: 0 };
+    let signIn;
+    try { signIn = await admin.auth().getUserByEmail(email); }
+    catch (e) {
+      if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-email') return { users: [], count: 0 };
+      throw e;
+    }
+    const u = (await db.collection('users').doc(signIn.uid).get()).data() || {};
+    return { users: [userRow(signIn.uid, u, signIn)], count: 1 };
+  }
   const limit = Math.min(Number((data && data.limit) || 100), 500);
   let q = db.collection('users').orderBy('createdAt', 'desc').limit(limit);
   if (data && data.startAfterCreatedAt) {
@@ -225,25 +259,7 @@ exports.adminListUsers = functions.https.onCall(async (data, context) => {
   }
   const snap = await q.get();
   const signIns = await signInsFor(snap.docs.map((d) => d.id));
-  const users = snap.docs.map(d => {
-    const u = d.data();
-    const signIn = signIns.get(d.id);
-    return {
-      uid: d.id,
-      email: (signIn && signIn.email) || null,
-      emailVerified: !!(signIn && signIn.emailVerified),
-      signInDeleted: !signIn,
-      role: u.role || 'user',
-      subscriptionStatus: u.subscriptionStatus || null,
-      trialEndsAt: u.trialEndsAt || null,
-      subscriptionExpiryMillis: u.subscriptionExpiryMillis || null,
-      adminGrantUntil: u.adminGrantUntil || null,
-      compForever: !!u.compForever,
-      subscriptionProvider: u.subscriptionProvider || null,
-      cancelAtPeriodEnd: !!u.cancelAtPeriodEnd,
-      createdAt: u.createdAt && u.createdAt.toMillis ? u.createdAt.toMillis() : null
-    };
-  });
+  const users = snap.docs.map((d) => userRow(d.id, d.data(), signIns.get(d.id)));
   return { users, count: users.length };
 });
 
