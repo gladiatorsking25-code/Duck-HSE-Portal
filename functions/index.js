@@ -216,7 +216,19 @@ exports.adminSetRole = functions.https.onCall(async (data, context) => {
   return { uid: targetUid, role };
 });
 
-// List accounts for the admin dashboard (paged).
+// The sign-in records (Firebase Auth) for a list of uids, 100 at a time.
+async function signInsFor(uids) {
+  const out = new Map();
+  for (let i = 0; i < uids.length; i += 100) {
+    const res = await admin.auth().getUsers(uids.slice(i, i + 100).map((uid) => ({ uid })));
+    res.users.forEach((r) => out.set(r.uid, r));
+  }
+  return out;
+}
+
+// List accounts for the admin dashboard (paged). The email shown is the one
+// the person signs in with, from Firebase Auth, never the copy in their users
+// doc. createdAt is set by onUserCreate and the rules keep clients off it.
 exports.adminListUsers = functions.https.onCall(async (data, context) => {
   await assertAdmin(context);
   const limit = Math.min(Number((data && data.limit) || 100), 500);
@@ -225,11 +237,15 @@ exports.adminListUsers = functions.https.onCall(async (data, context) => {
     q = db.collection('users').orderBy('createdAt', 'desc').startAfter(new Date(data.startAfterCreatedAt)).limit(limit);
   }
   const snap = await q.get();
+  const signIns = await signInsFor(snap.docs.map((d) => d.id));
   const users = snap.docs.map(d => {
     const u = d.data();
+    const signIn = signIns.get(d.id);
     return {
       uid: d.id,
-      email: u.email || null,
+      email: (signIn && signIn.email) || null,
+      emailVerified: !!(signIn && signIn.emailVerified),
+      signInDeleted: !signIn,
       role: u.role || 'user',
       subscriptionStatus: u.subscriptionStatus || null,
       trialEndsAt: u.trialEndsAt || null,
@@ -242,6 +258,22 @@ exports.adminListUsers = functions.https.onCall(async (data, context) => {
     };
   });
   return { users, count: users.length };
+});
+
+// Delete an account when its owner asks: sign-in, profile, saved records,
+// project memberships and invites; their address is replaced by "deleted
+// user" in project history (see account-delete.js, docs/DEPLOY.md).
+// data: { targetUid, dryRun } to see what would happen, then
+//       { targetUid, confirm: <the account's email address> } to do it.
+const { makeAccountDelete } = require('./account-delete');
+exports.adminDeleteAccount = functions.runWith({ timeoutSeconds: 540, memory: '512MB' }).https.onCall(async (data, context) => {
+  try {
+    const adminUid = await assertAdmin(context);
+    const d = data || {};
+    return await makeAccountDelete({ db, FieldValue, auth: admin.auth() }).deleteAccount({
+      adminUid, targetUid: d.targetUid, confirm: d.confirm, dryRun: d.dryRun === true
+    });
+  } catch (err) { throw asHttpsError(err); }
 });
 
 // -------------------------------------------------------------------------

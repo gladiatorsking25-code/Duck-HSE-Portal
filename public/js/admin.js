@@ -68,6 +68,48 @@
     try { await call('adminSetRole', { targetUid: uid, role }); await load(); } catch (e) {}
   }
 
+  function note(kind, text) {
+    $('adminResult').innerHTML = `<div class="banner banner-${kind}"><div>${esc(text)}</div></div>`;
+  }
+
+  // Deleting an account (when its owner asks, see docs/DEPLOY.md): the server
+  // first says what would happen, then the admin types the address to confirm.
+  async function deleteAccount(uid) {
+    let plan;
+    try { plan = await call('adminDeleteAccount', { targetUid: uid, dryRun: true }); } catch (e) { return; }
+    const byId = plan.email === plan.uid;
+    const lines = [
+      `Delete the account ${plan.email}? This cannot be undone.`,
+      '',
+      'Their sign-in, profile and saved records are deleted and they leave every project. Project history keeps what they did, shown as "deleted user".'
+    ];
+    if (plan.leave.length) lines.push('', `They leave: ${plan.leave.join(', ')}.`);
+    if (plan.archive.length) lines.push('', `Archived, because nobody else belongs to them: ${plan.archive.join(', ')}.`);
+    const sub = plan.subscription;
+    if (sub && sub.provider === 'stripe') {
+      lines.push('', sub.renews
+        ? `WARNING: their card subscription still renews. Cancel it in Stripe first (customer ${sub.stripeCustomerId || 'unknown'}), or they will keep being charged.`
+        : 'Their card subscription is already cancelled and will not renew.');
+    } else if (sub) {
+      lines.push('', 'WARNING: their Google Play subscription is still running. Ask them to cancel it in Google Play, or cancel it in Play Console (Order management), or they will keep being charged.');
+    }
+    lines.push('', byId ? 'To confirm, type the account id:' : 'To confirm, type their email address:');
+    const typed = prompt(lines.join('\n'));
+    if (typed == null) return;
+    if (typed.trim().toLowerCase() !== plan.email.toLowerCase()) {
+      note('warn', 'Nothing was deleted: what you typed did not match.');
+      return;
+    }
+    try {
+      const res = await call('adminDeleteAccount', { targetUid: uid, confirm: typed.trim() });
+      await load();
+      const parts = [`The account ${res.email} was deleted.`];
+      if (res.archived) parts.push(`${res.archived} project${res.archived === 1 ? ' was' : 's were'} archived.`);
+      if (res.subscription && res.subscription.renews) parts.push('Remember to cancel their subscription.');
+      note('ok', parts.join(' '));
+    } catch (e) { /* message already shown */ }
+  }
+
   function render() {
     const q = ($('adminSearch').value || '').toLowerCase();
     const list = allUsers.filter(u => {
@@ -86,7 +128,8 @@
             const a = stateOf(u);
             const grant = u.compForever ? 'forever' : fmt(u.adminGrantUntil);
             return `<tr>
-              <td>${esc(u.email || '—')}<div class="hint num">${esc(u.uid.slice(0, 10))}…</div></td>
+              <td>${esc(u.email || '—')}${u.email && !u.emailVerified ? ' <span class="hint">(not verified)</span>' : ''}
+                ${u.signInDeleted ? '<div class="hint">Sign-in deleted</div>' : ''}<div class="hint num">${esc(u.uid.slice(0, 10))}…</div></td>
               <td>${badge(a)}</td>
               <td>${esc(u.subscriptionStatus || '—')}${u.subscriptionProvider ? `<div class="hint">${esc(u.subscriptionProvider)}${u.cancelAtPeriodEnd ? ' · cancelling' : ''}</div>` : ''}</td>
               <td class="num">${fmt(u.trialEndsAt)}</td>
@@ -101,6 +144,7 @@
                   <button class="btn btn-sm" data-a="extendTrial" data-d="14" data-u="${esc(u.uid)}">+14d trial</button>
                   <button class="btn btn-sm btn-danger" data-a="revoke" data-u="${esc(u.uid)}">Revoke</button>
                   <button class="btn btn-sm" data-a="role" data-r="${u.role === 'admin' ? 'user' : 'admin'}" data-u="${esc(u.uid)}">${u.role === 'admin' ? 'Remove admin' : 'Make admin'}</button>
+                  ${u.role === 'admin' ? '' : `<button class="btn btn-sm btn-danger" data-a="delete" data-u="${esc(u.uid)}">Delete account</button>`}
                 </div>
               </td>
             </tr>`;
@@ -117,6 +161,7 @@
         else if (a === 'extendTrial') act(uid, 'extendTrial', Date.now() + Number(b.getAttribute('data-d')) * DAY);
         else if (a === 'revoke') { if (confirm('Revoke access for this account?')) act(uid, 'revoke'); }
         else if (a === 'role') setRole(uid, b.getAttribute('data-r'));
+        else if (a === 'delete') deleteAccount(uid);
       });
     });
   }
