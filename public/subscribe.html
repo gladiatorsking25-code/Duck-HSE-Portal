@@ -38,7 +38,15 @@
     <div id="payOffline"></div>
 
     <div id="payNotInApp" hidden>
-      <div class="banner banner-info"><div>Card subscription is handled by <strong>Google Play</strong> inside the Android app. On the web you can subscribe by <strong>PayPal or bank transfer</strong> — see "Other ways to subscribe" below.</div></div>
+      <div class="banner banner-info"><div>Card subscription is handled by <strong>Google Play</strong> inside the Android app. On the web you can subscribe by <strong>PayPal or bank transfer</strong> — see “Request access” below.</div></div>
+    </div>
+
+    <div id="payLapsed" hidden style="margin-top:16px; border-top:1px solid var(--line); padding-top:14px;">
+      <p class="hint" style="margin:0 0 8px;">Your records are still yours. Without a subscription you can still:</p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px 18px; font-size:13.5px;">
+        <a href="projects.html" id="payOpenProjects">Open my projects (read-only)</a>
+        <a href="settings.html" id="payExport">Export my records</a>
+      </div>
     </div>
 
     <div id="payResult" style="margin-top:12px;"></div>
@@ -56,7 +64,7 @@
 </div>
 
 <script>
-(function () {
+(async function () {
   const $ = (id) => document.getElementById(id);
   const cfg = SUBSCRIPTION_CONFIG;
   if (typeof APP_BUILD_LABEL !== 'undefined') $('payBuild').textContent = APP_BUILD_LABEL;
@@ -64,15 +72,32 @@
 
   $('paySignOut').addEventListener('click', (e) => { e.preventDefault(); Access.signOut(); });
 
+  function escOff(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  const show = (kind, text) => { $('payResult').innerHTML = `<div class="banner banner-${kind}"><div>${escOff(text)}</div></div>`; };
+  const setBusy = (busy) => document.querySelectorAll('.buy-btn').forEach(b => { b.disabled = busy; });
+  const PLAY_UNAVAILABLE = 'Google Play purchases are not available in this copy of the app. Update Duck HSE from the Play Store and try again. If it keeps happening, contact support.';
+  const OTHER_ACCOUNT = 'The Google Play subscription on this phone is linked to another Duck HSE account. Sign in with that account to use it, or contact support.';
+
+  // Inside the Android app: Google Play only. Play's payments policy does not
+  // allow card or invoice payments there, even when Play is not working.
+  // On the website: card checkout (Stripe), unless it is switched off, in
+  // which case the request-access option is it. Chrome on Android offers the
+  // Play API on every website, so the app is recognised only when Google Play
+  // actually answers or the app marked this launch (js/billing.js).
+  let playOk = await Billing.playReady();
+  const inApp = playOk || Billing.inTwa();
+  const cardOn = !inApp && !!(cfg.WEB_PAYMENTS && cfg.WEB_PAYMENTS.enabled);
+  if (inApp) $('payManageHint').textContent = 'Manage or cancel anytime in the Play Store under Payments & subscriptions.';
+
   // Web / B2B path: the customer REQUESTS access; you send a payment link or
   // invoice privately (by email) and activate them from the admin dashboard.
-  // No bank details are shown or shipped — safer for you.
-  function escOff(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  // No bank details are shown or shipped — safer for you. Never in the app.
   function renderOffline() {
     const op = cfg.OFFLINE_PAYMENT;
     const host = $('payOffline');
     if (!host) return;
-    if (!op || !op.enabled) { host.innerHTML = ''; return; }
+    if (inApp || !op || !op.enabled) { host.innerHTML = ''; return; }
+    if ($('payOfflineDetails')) return;   // already there (keep it open if it was opened)
     const requestSubject = encodeURIComponent('Duck HSE Portal — subscription request');
     const requestBody = encodeURIComponent(
       'Hello,\n\nI would like to subscribe to Duck HSE Portal.\n\n' +
@@ -92,27 +117,54 @@
       </details>`;
   }
 
+  // ---- Restore: send the phone's Play purchases to this account ----
+  let uid = null;
+  // Re-reads the account from the server; moves on to the app when it now has
+  // paid access. (The live watch in js/access.js normally does this first.)
+  async function recheck() {
+    try {
+      const fb = await firebaseReadyPromise;
+      if (!fb || !uid) return false;
+      const snap = await fb.firestore().collection('users').doc(uid).get({ source: 'server' });
+      const a = Entitlements.computeAccess(snap.exists ? snap.data() : {}, Date.now());
+      if (['active', 'granted', 'admin'].indexOf(a.state) === -1) return false;
+      Entitlements.writeCache(a, uid);   // so the app's page gate does not send us back here
+      show('ok', 'Your Google Play subscription is active. Taking you to the app…');
+      setTimeout(() => location.replace('index.html'), 1200);
+      return true;
+    } catch (e) { return false; }
+  }
+  // quiet: the automatic check only speaks up when there is something to act on.
+  async function afterRestore(r, quiet) {
+    if (r.otherAccount) { show('warn', OTHER_ACCOUNT); return; }
+    if (r.restored && await recheck()) return;
+    if (quiet) return;
+    if (r.failed) show('danger', 'Could not check your Google Play purchases. Please try again, or contact support.');
+    else if (r.restored) show('info', 'Checked Google Play: there is no active subscription for this account.');
+    else show('info', 'Checked Google Play: no subscription was found for the Google account on this phone.');
+  }
   $('payRestore').addEventListener('click', async (e) => {
     e.preventDefault();
-    if (!Billing.available()) { $('payResult').innerHTML = '<div class="banner banner-info"><div>Open the Android app to restore purchases.</div></div>'; return; }
+    if (!playOk && inApp) playOk = await Billing.playReady();   // Play may have been slow to answer
+    if (!playOk) { show('info', inApp ? PLAY_UNAVAILABLE : 'Open the Android app to restore purchases.'); return; }
     $('payResult').innerHTML = '<div class="hint">Checking Google Play…</div>';
-    try { const r = await Billing.restore(); $('payResult').innerHTML = `<div class="banner banner-ok"><div>Checked Google Play (${r.restored} purchase(s) synced). If you have an active plan, access will unlock shortly.</div></div>`; }
-    catch (err) { $('payResult').innerHTML = '<div class="banner banner-danger"><div>Could not restore purchases.</div></div>'; }
+    try { await afterRestore(await Billing.restore(), false); }
+    catch (err) { show('danger', 'Could not check your Google Play purchases. Please try again, or contact support.'); }
   });
-
-  // Inside the Android app: Google Play. On the web: card checkout (Stripe),
-  // unless it is switched off, in which case the request-access option is it.
-  const inApp = Billing.available();
-  const cardOn = !inApp && !!(cfg.WEB_PAYMENTS && cfg.WEB_PAYMENTS.enabled);
-  $('payRestore').hidden = !inApp;
-  if (inApp) $('payManageHint').textContent = 'Manage or cancel anytime in the Play Store under Payments & subscriptions.';
-  renderOffline();
-
-  const show = (kind, text) => { $('payResult').innerHTML = `<div class="banner banner-${kind}"><div>${escOff(text)}</div></div>`; };
-  const setBusy = (busy) => document.querySelectorAll('.buy-btn').forEach(b => { b.disabled = busy; });
+  // In the app, check Play once per launch without being asked: a renewal (the
+  // purchase token does not change) or a purchase on another device then
+  // unlocks the account by itself.
+  let autoRestoreStarted = false;
+  function autoRestore() {
+    if (autoRestoreStarted || !playOk) return;
+    autoRestoreStarted = true;
+    Billing.restoreOnce().then((r) => { if (r) return afterRestore(r, true); }).catch((e) => console.warn('Automatic Play check failed', e));
+  }
 
   function renderPlans(details) {
+    $('payRestore').hidden = !inApp;
     $('payNotInApp').hidden = inApp || cardOn;
+    renderOffline();
     const byId = {};
     (details || []).forEach(d => { byId[d.itemId || d.id] = d; });
     const list = cardOn ? WebBilling.plans() : cfg.PRODUCTS;
@@ -135,16 +187,32 @@
       </div>`;
     }).join('') +
       (cfg.PLAN_NOTE ? `<p class="hint" style="margin:4px 0 0;">${escOff(cfg.PLAN_NOTE)}</p>` : '') +
-      (cfg.PLAN_TERMS ? `<p class="hint" style="margin:6px 0 12px;">${escOff(cfg.PLAN_TERMS)}</p>` : '') +
+      (cfg.PLAN_TERMS ? `<p class="hint" style="margin:6px 0 0;">${escOff(cfg.PLAN_TERMS)}</p>` : '') +
+      '<p class="hint" id="payLegal" style="margin:6px 0 12px;">By subscribing you accept the <a href="terms.html">Terms of Use</a> and the <a href="privacy.html">Privacy Notice</a>.</p>' +
       (cardOn ? '<p class="hint" style="margin:0 0 12px;">Card payments are processed securely by Stripe. Your card details never reach this site.</p>' : '');
     document.querySelectorAll('.buy-btn').forEach(b => b.addEventListener('click', () => buy(b.getAttribute('data-product'))));
   }
 
+  // An account an admin suspended: no plans (paying would not unlock it).
+  function renderSuspended() {
+    $('payTitle').textContent = 'This account is suspended';
+    $('payStatus').textContent = 'It cannot be used or subscribed to at the moment.';
+    $('payPlans').innerHTML = '';
+    $('payOffline').innerHTML = '';
+    $('payNotInApp').hidden = true;
+    $('payRestore').hidden = true;
+    $('payManageHint').hidden = true;
+    $('payNotice').innerHTML = `<div class="banner banner-warn"><div>If you think this is a mistake, please <a href="mailto:${escOff(cfg.SUPPORT_EMAIL)}">contact support</a> (${escOff(cfg.SUPPORT_EMAIL)}).</div></div>`;
+  }
+
   async function buy(productId) {
     if (cardOn) return buyCard(productId);
-    // No card option here — route to the invoice/bank/PayPal request (which
-    // works everywhere) instead of dead-ending.
-    if (!Billing.available()) {
+    if (!playOk && inApp) playOk = await Billing.playReady();   // Play may have been slow to answer
+    if (!playOk) {
+      // In the app, Google Play is the only way to pay.
+      if (inApp) { show('warn', PLAY_UNAVAILABLE); return; }
+      // Website with card payments off: route to the invoice/bank/PayPal
+      // request (which works everywhere) instead of dead-ending.
       const off = document.getElementById('payOfflineDetails') || document.querySelector('.pay-offline');
       if (off) { off.open = true; try { off.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }
       $('payResult').innerHTML = '<div class="banner banner-info"><div>Card subscription is billed through <strong>Google Play</strong> in the Android app. Not on the app yet? Tap <strong>“Request access”</strong> below and we’ll send you a secure payment link.</div></div>';
@@ -156,11 +224,12 @@
       $('payResult').innerHTML = '<div class="banner banner-ok"><div>Thank you — your subscription is active. Taking you to the app…</div></div>';
       setTimeout(() => location.replace('index.html'), 1500);
     } catch (err) {
+      if (err.code === 'other-account') { show('danger', err.message || OTHER_ACCOUNT); return; }
       const msg = err.code === 'cancelled' ? 'Purchase cancelled.'
-        : err.code === 'unavailable' ? 'Open the Android app to subscribe.'
+        : err.code === 'unavailable' ? PLAY_UNAVAILABLE
         : err.code === 'verify' ? 'Payment went through but we could not confirm it yet. It will unlock shortly — or contact support.'
         : 'Something went wrong with the purchase.';
-      $('payResult').innerHTML = `<div class="banner ${err.code === 'cancelled' ? 'banner-info' : 'banner-danger'}"><div>${msg}</div></div>`;
+      show(err.code === 'cancelled' ? 'info' : 'danger', msg);
     }
   }
 
@@ -199,12 +268,20 @@
   }
 
   let activating = false;
+  let suspended = false;
+  let lastDoc = null;
   Access.handlePaywallPage(async (ctx) => {
     if (!ctx.configured) { $('paySetup').hidden = false; renderPlans(null); return; }
+    uid = ctx.user && ctx.user.uid;
+    if (ctx.doc) lastDoc = ctx.doc;   // a cached update carries no document
+    const access = ctx.access || {};
+    // Signed in without access: reading and exporting their records stays open.
+    $('payLapsed').hidden = activating || access.hasAccess !== false;
+    if (lastDoc && lastDoc.subscriptionStatus === 'revoked') { suspended = true; renderSuspended(); return; }
+    if (suspended) { suspended = false; $('payNotice').innerHTML = ''; $('payManageHint').hidden = false; }
     // Paid on Stripe: wait here for the webhook. handlePaywallPage sends the
     // user on to the app the moment their subscription is live.
-    if (checkoutState === 'success') { if (!activating) { activating = true; renderActivating(); } return; }
-    const access = ctx.access || {};
+    if (checkoutState === 'success') { if (!activating) { activating = true; $('payLapsed').hidden = true; renderActivating(); } return; }
     if (access.state === 'trial') {
       const left = Entitlements.daysLeft(access.until);
       $('payTitle').textContent = 'You’re on the free trial';
@@ -212,18 +289,21 @@
         // Matches the server: Stripe needs 48 h or more of trial left to defer the first charge.
         (cardOn && access.until - Date.now() > 49 * 3600e3 ? '. You will not be charged until then.' : '.');
     } else if (access.state === 'locked' || access.state === 'expired') {
-      $('payTitle').textContent = ctx.doc && ctx.doc.subscriptionProvider ? 'Your subscription has ended' : 'Your free trial has ended';
+      $('payTitle').textContent = lastDoc && lastDoc.subscriptionProvider ? 'Your subscription has ended' : 'Your free trial has ended';
       $('payStatus').textContent = 'Subscribe to continue using Duck HSE Portal.';
     } else {
       // pending / unknown — the backend hasn't stamped a trial yet, or the
       // entitlement can't be read. Show the plans neutrally rather than a
       // misleading "trial ended".
       $('payTitle').textContent = 'Choose your plan';
-      $('payStatus').textContent = 'Pick a plan below, or ask us for an invoice.';
+      $('payStatus').textContent = inApp ? 'Pick a plan below.' : 'Pick a plan below, or ask us for an invoice.';
     }
     let details = null;
     try { details = await Billing.getProducts(); } catch (e) { /* not in app */ }
+    // The account may have been suspended while Play answered.
+    if (suspended) return;
     renderPlans(details);
+    autoRestore();
   });
 })();
 </script>

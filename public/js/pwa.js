@@ -12,6 +12,20 @@
   const canRegister = 'serviceWorker' in navigator &&
     (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
+  // ---- Remember that the Android app opened this launch ----
+  // The app opens pages with ?src=twa (twa-manifest.json startUrl and
+  // shortcuts), which the sign-in redirect keeps in ?next=, and Android gives
+  // the first page an android-app://<package> referrer. The paywall reads this
+  // mark so it never offers web payments inside the app. Same check as
+  // Billing.inTwa() in js/billing.js; sessionStorage keeps it for this launch.
+  function isAppLaunch() {
+    const q = new URLSearchParams(location.search);
+    if (q.get('src') === 'twa' || /[?&]src=twa(&|$)/.test(q.get('next') || '')) return true;
+    const pkg = String((typeof SUBSCRIPTION_CONFIG !== 'undefined' && SUBSCRIPTION_CONFIG.PLAY_PACKAGE_NAME) || 'Duck.HSE.Portal');
+    return String(document.referrer || '').toLowerCase().indexOf('android-app://' + pkg.toLowerCase()) === 0;
+  }
+  try { if (isAppLaunch()) sessionStorage.setItem('duck_twa', '1'); } catch (e) { /* storage blocked */ }
+
   // ---- small toast, styled from the app's own tokens ----
   function toast(html, actions) {
     const el = document.createElement('div');

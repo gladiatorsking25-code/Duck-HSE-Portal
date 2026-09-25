@@ -1,31 +1,72 @@
 // billing.js — Google Play Billing purchase flow for the TWA, via the Digital
 // Goods API + Payment Request API.
 //
-// This only works inside the installed Android app (the TWA), where Chrome
-// exposes `getDigitalGoodsService('https://play.google.com/billing')`. In a
-// plain browser that API isn't present, so Billing.available() returns false and
-// the paywall tells the user to subscribe from the Android app. That is the
-// honest situation: you can only buy a Play subscription through Play.
+// This only works inside the installed Android app (the TWA) built with Play
+// Billing. Careful: Chrome on Android and on Chromebooks has
+// `getDigitalGoodsService` on EVERY website, so its presence proves nothing;
+// outside the app the call just fails. So the paywall asks playReady() (does
+// Google Play actually answer?) and inTwa() (did the Android app open this
+// launch?) instead. On the plain website neither is true, and the paywall
+// offers card checkout (WebBilling below).
 //
 // The security-critical part is that a purchase is NOT trusted on the client.
 // The purchase token returned by Play is sent to the verifyPlayPurchase Cloud
-// Function, which checks it against the Google Play Developer API and writes the
-// entitlement server-side. The client never decides its own subscription state.
+// Function, which checks it against the Google Play Developer API, ties it to
+// one account, and writes the entitlement server-side. The client never
+// decides its own subscription state.
 
 const Billing = (function () {
   'use strict';
 
   const PLAY_METHOD = 'https://play.google.com/billing';
+  const TWA_KEY = 'duck_twa';             // sessionStorage: this launch is the Android app
+  const RESTORE_KEY = 'duck_play_restored'; // sessionStorage: checked Play this launch
+  const READY_WAIT_MS = 5000;
 
+  // ---- Is this the Android app? --------------------------------------------
+  // The app opens its pages with ?src=twa (startUrl and shortcuts in
+  // twa-manifest.json), and Android gives the first page an
+  // android-app://<package> referrer. The sign-in and paywall redirects keep
+  // the first address in ?next=. The mark lasts for this launch only
+  // (sessionStorage); js/pwa.js records it the same way on the other pages.
+  function launchedByApp() {
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.get('src') === 'twa' || /[?&]src=twa(&|$)/.test(q.get('next') || '')) return true;
+      const pkg = String((typeof SUBSCRIPTION_CONFIG !== 'undefined' && SUBSCRIPTION_CONFIG.PLAY_PACKAGE_NAME) || 'Duck.HSE.Portal');
+      return String(document.referrer || '').toLowerCase().indexOf('android-app://' + pkg.toLowerCase()) === 0;
+    } catch (e) { return false; }
+  }
+  if (launchedByApp()) { try { sessionStorage.setItem(TWA_KEY, '1'); } catch (e) { /* storage blocked */ } }
+
+  function inTwa() {
+    try { if (sessionStorage.getItem(TWA_KEY) === '1') return true; } catch (e) { /* storage blocked */ }
+    return launchedByApp();
+  }
+
+  // The API is there (not proof of the app: see above).
   function available() {
     return typeof window !== 'undefined' && 'getDigitalGoodsService' in window && typeof PaymentRequest !== 'undefined';
   }
 
-  async function service() {
-    if (!available()) return null;
-    try { return await window.getDigitalGoodsService(PLAY_METHOD); }
-    catch (e) { console.warn('Digital Goods service unavailable', e); return null; }
+  // Google Play's Digital Goods service, or null. Asked once per page.
+  let dg = null;
+  function service(waitMs) {
+    if (!available()) return Promise.resolve(null);
+    if (!dg) {
+      dg = Promise.resolve()
+        .then(() => window.getDigitalGoodsService(PLAY_METHOD))
+        .then((svc) => svc || null, (e) => { console.info('Google Play billing is not available here:', (e && e.message) || e); return null; });
+    }
+    if (!waitMs) return dg;
+    return Promise.race([dg, new Promise((resolve) => setTimeout(() => resolve(null), waitMs))]);
   }
+
+  // True only where Google Play can take the payment: inside the Android app.
+  async function playReady() { return !!(await service(READY_WAIT_MS)); }
+
+  // The server refused the purchase because it belongs to another account.
+  function isOtherAccount(e) { return /failed-precondition$/.test(String((e && e.code) || '')); }
 
   // Returns Play's store details (localized price, title) for the configured
   // products, or null when not running inside the TWA.
@@ -38,10 +79,12 @@ const Billing = (function () {
   }
 
   // Runs the full buy → verify flow for one product id. Throws with a `.code`
-  // the UI can branch on: 'unavailable' (not in TWA), 'cancelled', 'verify' (the
-  // server could not confirm the purchase), or 'error'.
+  // the UI can branch on: 'unavailable' (not in the app), 'cancelled',
+  // 'other-account' (this Google Play subscription belongs to another account;
+  // `.message` says so), 'verify' (the server could not confirm the purchase),
+  // or 'error'.
   async function subscribe(productId) {
-    if (!available()) { const e = new Error('Play Billing is only available in the Android app.'); e.code = 'unavailable'; throw e; }
+    if (!(await playReady())) { const e = new Error('Play Billing is only available in the Android app.'); e.code = 'unavailable'; throw e; }
     if (typeof FIREBASE_READY === 'undefined' || !FIREBASE_READY) { const e = new Error('Backend not configured.'); e.code = 'unavailable'; throw e; }
 
     let response;
@@ -66,36 +109,52 @@ const Billing = (function () {
         purchaseToken: purchaseToken
       });
       await response.complete('success');
-      // Acknowledge to Play so the purchase isn't auto-refunded after 3 days.
-      try { const svc = await service(); if (svc && svc.acknowledge) await svc.acknowledge(purchaseToken, 'onetime'); } catch (e) { /* subs may be acked server-side */ }
+      // The server acknowledges the purchase to Play (otherwise Play refunds it
+      // after 3 days); older Chrome versions can do it here too.
+      try { const svc = await service(); if (svc && svc.acknowledge) await svc.acknowledge(purchaseToken, 'onetime'); } catch (e) { /* done server-side */ }
       return result.data;
     } catch (e) {
       try { await response.complete('fail'); } catch (_) {}
-      const err = new Error('Could not verify the purchase.'); err.code = 'verify'; err.cause = e; throw err;
+      const other = isOtherAccount(e);
+      const err = new Error(other ? e.message : 'Could not verify the purchase.');
+      err.code = other ? 'other-account' : 'verify'; err.cause = e; throw err;
     }
   }
 
-  // Reconcile on app open: if Play has active purchases we haven't verified this
-  // session (e.g. bought on another device, or a renewal), push them to the
-  // server so entitlement is current.
+  // Sends every Play purchase of the phone's Google account to the server, so
+  // a renewal or a purchase made on another device reaches this account.
+  // Returns counts: { restored, otherAccount, failed }.
   async function restore() {
+    const out = { restored: 0, otherAccount: 0, failed: 0 };
     const svc = await service();
-    if (!svc || !svc.listPurchases) return { restored: 0 };
+    if (!svc || !svc.listPurchases) return out;
     let purchases = [];
-    try { purchases = await svc.listPurchases(); } catch (e) { return { restored: 0 }; }
-    let restored = 0;
-    await firebaseReadyPromise;
+    try { purchases = await svc.listPurchases(); } catch (e) { return out; }
+    if (!purchases || !purchases.length || !(await firebaseReadyPromise)) return out;
     const verify = firebase.functions().httpsCallable('verifyPlayPurchase');
     for (const p of purchases) {
       try {
         await verify({ packageName: SUBSCRIPTION_CONFIG.PLAY_PACKAGE_NAME, subscriptionId: p.itemId, purchaseToken: p.purchaseToken });
-        restored++;
-      } catch (e) { console.warn('restore verify failed', e); }
+        out.restored++;
+      } catch (e) {
+        if (isOtherAccount(e)) out.otherAccount++; else out.failed++;
+        console.warn('restore verify failed', e);
+      }
     }
-    return { restored };
+    return out;
   }
 
-  return { available, getProducts, subscribe, restore };
+  // restore(), once per app launch (the paywall runs it by itself in the app).
+  // Returns null when it already ran.
+  async function restoreOnce() {
+    try {
+      if (sessionStorage.getItem(RESTORE_KEY) === '1') return null;
+      sessionStorage.setItem(RESTORE_KEY, '1');
+    } catch (e) { /* storage blocked: the page runs it once per visit */ }
+    return restore();
+  }
+
+  return { available, inTwa, playReady, getProducts, subscribe, restore, restoreOnce };
 })();
 
 // WebBilling — card subscriptions on the website through Stripe Checkout.
