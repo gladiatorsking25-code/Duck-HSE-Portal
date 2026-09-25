@@ -156,11 +156,15 @@ const ProjectFiles = (function () {
   let uploading = false;
   let lastFocus = null;
 
-  function canEdit() { const p = ctx.project(); return Projects.can.edit(p, ctx.uid()) && p.status !== 'archived'; }
+  // False while the account has no current access (access.js allowLapsed):
+  // files and backups can then be downloaded but not added, deleted or restored.
+  function writable() { return !(typeof Access !== 'undefined' && Access.readOnly); }
+  function canEdit() { const p = ctx.project(); return writable() && Projects.can.edit(p, ctx.uid()) && p.status !== 'archived'; }
+  // Owners and managers see the backups, even read-only.
   function canManage() { return Projects.can.manage(ctx.project(), ctx.uid()); }
   function canDelete(f) {
     const p = ctx.project();
-    if (p.status === 'archived') return false;
+    if (p.status === 'archived' || !writable()) return false;
     return canManage() || (Projects.can.edit(p, ctx.uid()) && f.uploadedBy === ctx.uid());
   }
   function who(uidv, email) {
@@ -240,14 +244,16 @@ const ProjectFiles = (function () {
     card.hidden = !canManage();
     if (card.hidden) return;
     const archived = ctx.project().status === 'archived';
+    const canRestore = !archived && writable();
+    $('backupNowBtn').hidden = !writable();
     $('backupList').innerHTML = backups.length ? backups.map((b) => `<li>
         <span class="m-email">${esc(fmtWhen(b.createdAtMs))}<br><span class="item-sub">${esc(BACKUP_KINDS[b.kind] || b.kind)} · ${esc(b.itemCount)} item${b.itemCount === 1 ? '' : 's'} · ${esc(b.fileCount)} file${b.fileCount === 1 ? '' : 's'}</span></span>
         <span class="m-actions">
           ${Number(b.size) > MAX_FILE_BYTES ? '<span class="item-sub">Too large to download here</span>'
             : `<button class="btn btn-sm" type="button" data-backup-download="${esc(b.id)}">Download</button>`}
-          ${archived ? '' : `<button class="btn btn-sm" type="button" data-restore="${esc(b.id)}">Restore items</button>`}
+          ${canRestore ? `<button class="btn btn-sm" type="button" data-restore="${esc(b.id)}">Restore items</button>` : ''}
         </span></li>`).join('')
-      : `<li class="item-sub">${archived ? 'No backups yet. Archived projects are not backed up nightly; use Back up now.'
+      : `<li class="item-sub">${archived ? `No backups yet. Archived projects are not backed up nightly${writable() ? '; use Back up now' : ''}.`
         : 'No backups yet. The first nightly backup runs tonight.'}</li>`;
   }
 
@@ -355,7 +361,7 @@ const ProjectFiles = (function () {
 
   async function onBackupClick(e) {
     const dl = e.target.closest('[data-backup-download]');
-    const rs = e.target.closest('[data-restore]');
+    const rs = writable() ? e.target.closest('[data-restore]') : null;
     const msg = $('backupMsg');
     if (dl) {
       withMsg(msg, async () => {
@@ -389,6 +395,7 @@ const ProjectFiles = (function () {
     $('itemModal').addEventListener('click', onClick);
     $('backupList').addEventListener('click', onBackupClick);
     $('backupNowBtn').addEventListener('click', async () => {
+      if (!writable()) return;
       $('backupNowBtn').disabled = true;
       banner($('backupMsg'), 'info', 'Backing up…');
       try {
@@ -419,9 +426,12 @@ const ProjectFiles = (function () {
     }, (err) => { console.error(err); banner($('filesMsg'), 'danger', 'Could not load the file list.'); });
   }
 
-  // Called whenever the project (and so your role) changes.
+  // Called whenever the project (and so your role) or your access changes.
   function onProject() {
     renderFiles();
+    // Adding files is no longer allowed (read-only, archived, or a new role).
+    if (!canEdit() && !uploading) $('fileModal').hidden = true;
+    if (ctx.openItemId()) renderItemFiles(ctx.openItemId());
     const wantBackups = canManage();
     if (wantBackups && !stopBackups) {
       stopBackups = col(ctx.projectId, 'backups').orderBy('createdAtMs', 'desc').onSnapshot((snap) => {

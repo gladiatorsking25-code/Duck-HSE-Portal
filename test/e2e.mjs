@@ -495,6 +495,97 @@ try {
   await alice.waitForSelector('#wipeSignedOut:not([hidden])');
   step('Erasing needs the password, then wipes the device and signs out');
 
+  // 12. The project's CSV export has every item, closed ones included.
+  await bob.goto(projectUrl);
+  await bob.waitForSelector('#projectBody:not([hidden])');
+  const itemCount = await bob.evaluate((id) => firebase.firestore().collection('projects').doc(id).collection('items').get().then((s) => s.size), pid);
+  await bob.selectOption('#itemStatus', '');
+  await bob.waitForFunction((n) => document.querySelectorAll('#itemsTable tr[data-id]').length === n, itemCount, { timeout: 15000 });
+  await bob.selectOption('#itemStatus', 'notclosed');
+  assert.ok(await bob.locator('#itemsTable tr[data-id]').count() < itemCount, 'the default view hides closed items');
+  const [csvDl] = await Promise.all([bob.waitForEvent('download'), bob.click('#exportBtn')]);
+  const csvRows = (await readFile(await csvDl.path(), 'utf8')).replace(/^﻿/, '').split('\r\n');
+  assert.equal(csvRows.length, itemCount + 1, 'header plus every item');
+  assert.ok(csvRows.some((r) => r.includes('"Closed"')), 'closed items exported');
+  step('Export all items (CSV) includes the closed items the list is not showing');
+
+  // 13. Settings import checks the file, and Merge / Replace / Cancel mean what they say.
+  await bob.goto(BASE + 'settings.html');
+  await bob.waitForFunction(() => typeof DB !== 'undefined' && typeof BackupImport !== 'undefined');
+  const jsonFile = (name, obj) => ({ name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(obj)) });
+  await bob.setInputFiles('#fileImport', jsonFile('P-2041_backup.json', backup));
+  await bob.waitForFunction(() => /project backup/.test(document.getElementById('importResult').textContent));
+  assert.equal(await bob.isVisible('#importModal'), false, 'a project backup is refused');
+  const mine = {
+    exportedAt: new Date().toISOString(),
+    assessments: [{ id: 'A-imp', craneModel: 'QY25K5D' }],
+    permits: [{ id: 'P-imp', permitType: 'hot_work', permitNumber: 'HW-IMP-0001', status: 'closed' }],
+    checklists: [{ id: 'C-imp', assetNo: 'IMP-1', inspectionDate: '2026-09-01' }]
+  };
+  const localCounts = () => bob.evaluate(() => [DB.getAssessments().length, DB.getPermits().length, DB.getChecklists().length]);
+  const beforeImport = await localCounts();
+  await bob.setInputFiles('#fileImport', jsonFile('duck-hse-backup.json', mine));
+  await bob.waitForSelector('#importModal:not([hidden])');
+  await bob.click('#importModal .modal-foot [data-import-cancel]');
+  assert.deepEqual(await localCounts(), beforeImport, 'Cancel changes nothing');
+  await bob.setInputFiles('#fileImport', jsonFile('duck-hse-backup.json', mine));
+  await bob.waitForSelector('#importModal:not([hidden])');
+  await bob.click('#importReplaceBtn');
+  await bob.waitForSelector('#importReplaceWarn:not([hidden])');
+  await bob.click('#importModal .modal-foot [data-import-cancel]');
+  assert.deepEqual(await localCounts(), beforeImport, 'Replace asks again before changing anything');
+  await bob.setInputFiles('#fileImport', jsonFile('duck-hse-backup.json', mine));
+  await bob.waitForSelector('#importModal:not([hidden])');
+  await bob.click('#importMergeBtn');
+  await bob.waitForFunction(() => /Backup merged: 1 inspection checklist, 1 permit and 1 lift assessment imported/
+    .test(document.getElementById('importResult').textContent), null, { timeout: 20000 });
+  assert.deepEqual(await localCounts(), beforeImport.map((n) => n + 1));
+  step('Settings import refuses a project backup; Cancel and a first Replace change nothing; Merge reports all three counts');
+
+  // 14. Bob's trial ends while his project is open: it turns read-only
+  // instead of sending him to the paywall, and he can still download.
+  const { setUserNumber } = await import('./e2e-lib.mjs');
+  const bobUid = await bob.evaluate(() => firebase.auth().currentUser.uid);
+  await bob.goto(projectUrl);
+  await bob.waitForSelector('#addItemBtn:not([hidden])', { timeout: 15000 });
+  const navsBefore = bob.navs.length;
+  await setUserNumber(bobUid, 'trialEndsAt', Date.now() - 60000);
+  await bob.waitForSelector('#readOnlyBanner:not([hidden])', { timeout: 15000 });
+  assert.match(await bob.textContent('#readOnlyBanner'), /trial or subscription has ended/);
+  assert.equal(await bob.isVisible('#addItemBtn'), false);
+  assert.equal(await bob.isVisible('#addFileBtn'), false);
+  assert.equal(await bob.isEnabled('#exportBtn'), true);
+  const roPdf = bob.locator('#filesTable tbody tr', { hasText: 'Lift plan rev B.pdf' });
+  const [roDl] = await Promise.all([bob.waitForEvent('download'), roPdf.locator('[data-download]').click()]);
+  assert.ok((await readFile(await roDl.path())).equals(pdfBytes), 'files still download');
+  await bob.selectOption('#itemStatus', '');
+  await bob.locator('#itemsTable tr[data-id]').first().click();
+  assert.equal(await bob.isVisible('#itemSaveBtn'), false);
+  assert.equal(await bob.isDisabled('#iTitle'), true);
+  await bob.click('#itemModal .modal-foot [data-close]');
+  assert.equal(bob.navs.length, navsBefore, 'stayed on the project page');
+  step('When Bob’s trial ends, the open project turns read-only and files still download');
+
+  await bob.goto(BASE + 'projects.html');
+  await bob.waitForSelector('.project-card', { timeout: 15000 });
+  await bob.waitForSelector('#readOnlyBanner:not([hidden])');
+  assert.equal(await bob.isVisible('#newProjectBtn'), false);
+  await bob.goto(BASE + 'settings.html');
+  await bob.waitForSelector('#readOnlyBanner:not([hidden])');
+  assert.equal(await bob.isVisible('#importLabel'), false, 'no import while read-only');
+  const [expDl] = await Promise.all([bob.waitForEvent('download'), bob.click('#btnExport')]);
+  const exported = JSON.parse(await readFile(await expDl.path(), 'utf8'));
+  assert.ok(exported.permits.some((p) => p.id === 'P-imp'), 'export still works');
+  await bob.goto(BASE + 'index.html');
+  await bob.waitForURL(/subscribe\.html/, { timeout: 15000 });
+  step('A lapsed account opens its projects and exports from Settings; other pages go to the paywall');
+
+  await bob.goto(projectUrl);
+  await bob.waitForSelector('#readOnlyBanner:not([hidden])', { timeout: 15000 });
+  await setUserNumber(bobUid, 'trialEndsAt', Date.now() + 86400000);
+  await bob.waitForSelector('#addItemBtn:not([hidden])', { timeout: 15000 });
+  assert.equal(await bob.isVisible('#readOnlyBanner'), false);
+  step('When access comes back, the open project can be edited again');
 
   for (const [name, p] of [['alice', alice], ['bob', bob], ['visitor', visitor]]) {
     assert.deepEqual(p.errors, [], `${name} page errors`);

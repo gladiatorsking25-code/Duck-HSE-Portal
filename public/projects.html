@@ -9,7 +9,7 @@
 <script src="js/subscription-config.js"></script>
 <script src="js/entitlements.js"></script>
 <script src="js/access.js"></script>
-<script>requireAccess();</script>
+<script>requireAccess({ allowLapsed: true });</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Projects · Duck HSE Portal</title>
@@ -42,6 +42,7 @@
     </div>
 
     <div class="content">
+      <div id="readOnlyBanner" hidden></div>
       <div id="notice"></div>
       <div class="toolbar">
         <input type="search" id="search" placeholder="Search name, number, client, location…" aria-label="Search projects">
@@ -96,6 +97,7 @@ renderFooter('app-footer');
 const $ = (id) => document.getElementById(id);
 const esc = Projects.esc;
 let allProjects = [];
+let loaded = false;
 let openCounts = {};
 
 function banner(host, kind, text) {
@@ -119,7 +121,9 @@ function render() {
 
   const host = $('projectList');
   if (!allProjects.length) {
-    host.innerHTML = `<div class="card empty-state"><div class="icon">📁</div>No projects yet. Create your first one to start tracking permits, inspections and actions with your team.</div>`;
+    host.innerHTML = `<div class="card empty-state"><div class="icon">📁</div>No projects yet. ${Access.readOnly
+      ? 'Projects you are invited to appear here.'
+      : 'Create your first one to start tracking permits, inspections and actions with your team.'}</div>`;
     return;
   }
   if (!list.length) { host.innerHTML = `<div class="card empty-state">No projects match these filters.</div>`; return; }
@@ -151,6 +155,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('proj
 
 $('projectForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (Access.readOnly) return;
   const btn = $('projectSaveBtn');
   btn.disabled = true;
   try {
@@ -171,11 +176,19 @@ $('projectForm').addEventListener('submit', async (e) => {
 $('search').addEventListener('input', render);
 $('filterStatus').addEventListener('change', render);
 
+// An account without access can still open its projects, read-only.
+Access.readOnlyBanner($('readOnlyBanner'));
+Access.onReadOnlyChange((ro) => {
+  $('newProjectBtn').hidden = ro;
+  if (ro) closeModal();
+  if (loaded) render();
+});
+
 // ---- Load --------------------------------------------------------------------
 Projects.ready().then(() => {
   firebase.auth().onAuthStateChanged(async (user) => {
     if (!user) return;
-    Projects.watchMine(user.uid, (list) => { allProjects = list; $('newProjectBtn').disabled = false; render(); },
+    Projects.watchMine(user.uid, (list) => { allProjects = list; loaded = true; $('newProjectBtn').disabled = false; render(); },
       () => banner($('notice'), 'danger', 'Could not load your projects. Check your connection and try again.'));
     // Join any projects you were invited to (needs a verified email address).
     // Someone who just clicked the verification link still holds a sign-in

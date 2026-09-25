@@ -6,6 +6,13 @@
 // signed-out users to login. If Firebase isn't configured the gate fails
 // closed and every protected page routes to login.
 //
+// A few pages stay open, read-only, to an account without access, so nobody
+// loses sight of their records when a trial or subscription ends: Projects,
+// a project, and Settings (to export). They call
+// requireAccess({ allowLapsed: true }), then check Access.readOnly (or listen
+// with Access.onReadOnlyChange) and hide every control that changes data.
+// The Firestore rules and Cloud Functions refuse those writes anyway.
+//
 // Enforcement of DATA is always the Firestore rules on Google's servers — this
 // gate is the UX layer that routes people to the right screen. The rules can't
 // be bypassed from devtools, and the gate can't be tricked into granting data
@@ -32,41 +39,84 @@
   }
 
   // ---- The gate for ordinary protected pages -------------------------------
-  function requireAccess() {
+  // opts.allowLapsed: sign-in is still required, but an account without access
+  // stays on the page in read-only mode instead of going to the paywall.
+  function requireAccess(opts) {
     const c = cfg();
+    const allowLapsed = !!(opts && opts.allowLapsed);
     // No backend configured means no one can be verified: fail closed.
     if (!firebaseOn()) { go(c.LOGIN_PAGE); return; }
     const page = currentPage();
+    const toLogin = function () { go(c.LOGIN_PAGE + '?next=' + enc(page + location.search)); };
+    const locked = function () {
+      if (allowLapsed) setReadOnly(true);
+      else go(c.PAYWALL_PAGE + '?next=' + enc(page + location.search));
+    };
 
     // Synchronous, optimistic routing from cached flags so there's no flash of
     // app content for a signed-out or locked user. The async check below is the
     // authoritative one.
-    if (!cloudSignedIn()) { go(c.LOGIN_PAGE + '?next=' + enc(page + location.search)); return; }
+    if (!cloudSignedIn()) { toLogin(); return; }
     const cached = Entitlements.cachedAccess();
     if (cached && !cached.hasAccess && page !== c.PAYWALL_PAGE) {
-      go(c.PAYWALL_PAGE + '?next=' + enc(page + location.search)); return;
+      locked();
+      if (!allowLapsed) return;
     }
 
+    // Live: access that ends while the page is open turns it read-only (or
+    // sends it to the paywall), and access that starts makes it editable.
     armAuthWatch(function (user, access) {
-      if (!user) { go(c.LOGIN_PAGE + '?next=' + enc(page + location.search)); return; }
-      if (access && !access.hasAccess && page !== c.PAYWALL_PAGE) {
-        go(c.PAYWALL_PAGE + '?next=' + enc(page + location.search));
-      }
+      if (!user) { toLogin(); return; }
+      if (access && !access.hasAccess && page !== c.PAYWALL_PAGE) locked();
+      else if (access && access.hasAccess) setReadOnly(false);
     });
   }
+
+  // ---- Read-only mode (pages that pass allowLapsed) --------------------------
+  let _readOnly = false;
+  let _roCbs = [];
+  function setReadOnly(value) {
+    const v = !!value;
+    if (v === _readOnly) return;
+    _readOnly = v;
+    _roCbs.slice().forEach(function (f) { try { f(v); } catch (e) { console.error(e); } });
+  }
+  // Calls cb(readOnly) now and again every time it changes.
+  function onReadOnlyChange(cb) {
+    _roCbs.push(cb);
+    try { cb(_readOnly); } catch (e) { console.error(e); }
+    return function () { _roCbs = _roCbs.filter(function (f) { return f !== cb; }); };
+  }
+  // Shows the short "read-only" notice in `el` while the page is read-only.
+  function readOnlyBanner(el) {
+    if (!el) return;
+    onReadOnlyChange(function (ro) {
+      el.hidden = !ro;
+      el.innerHTML = ro
+        ? '<div class="banner banner-warn" role="status"><div>Your free trial or subscription has ended, so you can view, ' +
+          'download and export here, but not make changes. <a href="' + cfg().PAYWALL_PAGE + '">Subscribe</a> to make changes again.</div></div>'
+        : '';
+    });
+  }
+
+  // Pages that call requireAccess({ allowLapsed: true }).
+  const READ_ONLY_PAGES = ['projects.html', 'project.html', 'settings.html'];
 
   // ---- Helper for login.html: if already signed in AND has access, leave ----
   function handleLoginPage(onReady) {
     if (!firebaseOn()) { if (onReady) onReady('unconfigured'); return; }
     // Pages that stay open to an account without access (to delete data or
-    // read the legal pages after the trial ends).
+    // read the legal pages after the trial ends). READ_ONLY_PAGES open too,
+    // read-only.
     const OPEN_PAGES = ['account-deletion.html', 'privacy.html', 'terms.html', 'about.html'];
     armAuthWatch(function (user, access) {
       const next = new URLSearchParams(location.search).get('next');
+      const safeNext = next && /^[\w.-]+\.html/.test(next) ? next : '';
       if (user && access && access.hasAccess) {
-        go(next && /^[\w.-]+\.html/.test(next) ? next : 'index.html');
+        go(safeNext || 'index.html');
       } else if (user && access && !access.hasAccess) {
-        go(OPEN_PAGES.indexOf(next) !== -1 ? next : cfg().PAYWALL_PAGE);
+        const lapsedOk = OPEN_PAGES.indexOf(next) !== -1 || READ_ONLY_PAGES.indexOf(safeNext.split('?')[0]) !== -1;
+        go(lapsedOk ? next : cfg().PAYWALL_PAGE);
       } else if (onReady) {
         onReady('firebase');
       }
@@ -139,10 +189,14 @@
   global.Access = {
     firebaseOn: firebaseOn,
     requireAccess: requireAccess,
+    onReadOnlyChange: onReadOnlyChange,
+    readOnlyBanner: readOnlyBanner,
     handleLoginPage: handleLoginPage,
     handlePaywallPage: handlePaywallPage,
     handleAdminPage: handleAdminPage,
     armAuthWatch: armAuthWatch,
     signOut: signOut
   };
+  // True while an allowLapsed page is open for an account without access.
+  Object.defineProperty(global.Access, 'readOnly', { enumerable: true, get: function () { return _readOnly; } });
 })(window);
