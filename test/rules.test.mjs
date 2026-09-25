@@ -7,7 +7,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, getDocs,
-  query, where, serverTimestamp
+  query, where, serverTimestamp, deleteField
 } from 'firebase/firestore';
 
 const DAY = 86400000;
@@ -109,6 +109,85 @@ test('a user cannot set or change their card subscription fields', async () => {
   await assertFails(setDoc(doc(db('fresh'), 'users', 'fresh'), { email: 'fresh@example.com', stripeCustomerId: 'cus_1' }));
   // Ordinary profile edits still work.
   await assertSucceeds(updateDoc(me, { displayName: 'Lee' }));
+});
+
+test('a user cannot rewrite the email or sign-up date the admin sees, or add other fields', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await updateDoc(doc(ctx.firestore(), 'users', 'owner'), { email: 'owner@example.com', createdAt: new Date(2026, 0, 1) });
+  });
+  const me = doc(db('owner'), 'users', 'owner');
+  await assertFails(updateDoc(me, { email: 'customer@client.com' }));
+  await assertFails(updateDoc(me, { createdAt: new Date(2030, 0, 1) }));
+  await assertFails(updateDoc(me, { createdAt: deleteField() }));
+  await assertFails(updateDoc(me, { notes: 'anything else' }));
+  await assertFails(updateDoc(me, { displayName: 'x'.repeat(201) }));
+  await assertSucceeds(updateDoc(me, { displayName: 'Lee Owner' }));
+  // A new profile doc cannot carry them either.
+  await assertFails(setDoc(doc(db('fresh'), 'users', 'fresh'), { email: 'customer@client.com' }));
+  await assertFails(setDoc(doc(db('fresh'), 'users', 'fresh'), { createdAt: new Date(2030, 0, 1) }));
+  await assertSucceeds(setDoc(doc(db('fresh'), 'users', 'fresh'), { displayName: 'Fresh' }));
+});
+
+test('a user can record which version of the terms they accepted, stamped by the server clock', async () => {
+  const me = doc(db('lapsed'), 'users', 'lapsed');
+  await assertSucceeds(updateDoc(me, { consentVersion: '2026-09', consentAcceptedAt: serverTimestamp() }));
+  await assertFails(updateDoc(me, { consentVersion: '2026-10', consentAcceptedAt: new Date(2020, 0, 1) }));
+  await assertFails(updateDoc(me, { consentVersion: 'x'.repeat(41), consentAcceptedAt: serverTimestamp() }));
+  await assertFails(updateDoc(me, { consentVersion: 7, consentAcceptedAt: serverTimestamp() }));
+  await assertFails(updateDoc(me, { consentVersion: '2026-10', consentAcceptedAt: serverTimestamp(), role: 'admin' }));
+});
+
+test('the one-time free trial still starts from the app, and only once', async () => {
+  // No users doc yet (the server has not stamped the trial).
+  const trial = (days = 14) => ({ subscriptionStatus: 'trial', trialStartedAt: Date.now(), trialEndsAt: Date.now() + days * DAY });
+  await assertSucceeds(setDoc(doc(db('fresh'), 'users', 'fresh'), trial(), { merge: true }));
+  await assertFails(setDoc(doc(db('fresh'), 'users', 'fresh'), trial(13), { merge: true }));
+  // A doc holding only the consent record can still take the trial.
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'users', 'fresh2'), { consentVersion: '2026-09', consentAcceptedAt: new Date() });
+  });
+  await assertSucceeds(setDoc(doc(db('fresh2'), 'users', 'fresh2'), trial(), { merge: true }));
+  // Too long a trial is refused.
+  await assertFails(setDoc(doc(db('fresh3'), 'users', 'fresh3'),
+    { subscriptionStatus: 'trial', trialStartedAt: Date.now(), trialEndsAt: Date.now() + 60 * DAY }, { merge: true }));
+});
+
+// ---- Personal records (assessments, permits, checklists) -------------------
+test('saving personal records needs a subscription or trial; reading and deleting do not', async () => {
+  for (const name of ['assessments', 'permits', 'checklists']) {
+    await assertSucceeds(setDoc(doc(db('owner'), 'users', 'owner', name, 'r1'), { id: 'r1', title: 'Mine', updatedAt: Date.now() }));
+    await assertSucceeds(setDoc(doc(db('manager'), 'users', 'manager', name, 'r1'), { id: 'r1', updatedAt: Date.now() }, { merge: true }));
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'users', 'lapsed', name, 'old'), { id: 'old', title: 'Kept', updatedAt: 1 });
+      await setDoc(doc(ctx.firestore(), 'users', 'lapsed', name, 'old2'), { id: 'old2', title: 'Kept', updatedAt: 1 });
+    });
+    const lapsed = (id) => doc(db('lapsed'), 'users', 'lapsed', name, id);
+    await assertFails(setDoc(lapsed('new'), { id: 'new', title: 'New', updatedAt: Date.now() }));
+    await assertFails(setDoc(lapsed('old'), { id: 'old', title: 'Changed', updatedAt: Date.now() }));
+    await assertFails(setDoc(doc(db('revoked'), 'users', 'revoked', name, 'new'), { id: 'new', updatedAt: Date.now() }));
+    await assertSucceeds(getDoc(lapsed('old')));
+    await assertSucceeds(getDocs(collection(db('lapsed'), 'users', 'lapsed', name)));
+    await assertSucceeds(deleteDoc(lapsed('old2')));
+    // Someone else's records stay out of reach.
+    await assertFails(getDoc(doc(db('owner'), 'users', 'lapsed', name, 'old')));
+    await assertFails(setDoc(doc(db('owner'), 'users', 'lapsed', name, 'x'), { id: 'x', updatedAt: Date.now() }));
+    await assertFails(deleteDoc(doc(db('owner'), 'users', 'lapsed', name, 'old')));
+  }
+});
+
+test('a lapsed account can still mark its own records deleted, and only with a plain tombstone', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'users', 'lapsed', 'permits', 'p1'), { id: 'p1', title: 'Hot work', updatedAt: 1 });
+  });
+  const ref = (id) => doc(db('lapsed'), 'users', 'lapsed', 'permits', id);
+  await assertFails(setDoc(ref('p1'), { deleted: true, updatedAt: Date.now() }, { merge: true }));   // keeps the old fields
+  await assertFails(setDoc(ref('p1'), { deleted: true, updatedAt: Date.now(), title: 'Sneaky' }));
+  await assertFails(setDoc(ref('p1'), { deleted: true, updatedAt: 'now' }));
+  await assertFails(setDoc(ref('p1'), { deleted: 'yes', updatedAt: Date.now() }));
+  await assertFails(setDoc(ref('p1'), { deleted: true }));
+  await assertSucceeds(setDoc(ref('p1'), { deleted: true, updatedAt: Date.now() }));
+  await assertSucceeds(setDoc(ref('p2'), { deleted: true, updatedAt: Date.now() }));
+  await assertFails(setDoc(doc(db('owner'), 'users', 'lapsed', 'permits', 'p3'), { deleted: true, updatedAt: Date.now() }));
 });
 
 // ---- Creating projects ---------------------------------------------------
@@ -241,6 +320,19 @@ test('the activity log is append-only and server-stamped', async () => {
   }));
 });
 
+test('an activity entry carries the writer\'s own sign-in email, not a teammate\'s', async () => {
+  const entry = (email) => ({ at: serverTimestamp(), uid: 'editor', email, action: 'item.close', itemId: 'i1', summary: 'Closed: Hot work permit' });
+  const col = collection(db('editor'), 'projects', 'p1', 'activity');
+  await assertFails(addDoc(col, entry('owner@example.com')));
+  await assertFails(addDoc(col, entry('')));
+  await assertFails(addDoc(col, entry('EDITOR@example.com ')));
+  await assertSucceeds(addDoc(col, entry('editor@example.com')));
+  // A sign-in with no email address writes none.
+  const noEmail = collection(env.authenticatedContext('editor', {}).firestore(), 'projects', 'p1', 'activity');
+  await assertFails(addDoc(noEmail, entry('editor@example.com')));
+  await assertSucceeds(addDoc(noEmail, entry('')));
+});
+
 // ---- Files and backups (written only by Cloud Functions) -------------------
 test('every member can list and read files; outsiders cannot', async () => {
   for (const uid of ['owner', 'editor', 'viewer', 'lapsed']) {
@@ -271,4 +363,6 @@ test('Drive folder, space and trash records are server only', async () => {
   await assertFails(setDoc(doc(db('owner'), 'driveUsers', 'owner'), { usedBytes: 0, fileCount: 0 }));
   await assertFails(getDoc(doc(db('owner'), 'driveTrash', 't1')));
   await assertFails(setDoc(doc(db('owner'), 'driveTrash', 't1'), { pid: 'p1', uid: 'owner', size: -1e12, releaseAt: 0 }));
+  await assertFails(getDoc(doc(db('owner'), 'driveTotals', 'all')));
+  await assertFails(setDoc(doc(db('owner'), 'driveTotals', 'all'), { usedBytes: 0, fileCount: 0 }));
 });

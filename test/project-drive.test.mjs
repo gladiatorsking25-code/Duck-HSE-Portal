@@ -90,8 +90,12 @@ async function makeProject(pid, extra = {}) {
   }, extra));
 }
 const pdf = (bytes) => Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(bytes - 9, 32)]);
-const send = (pd, uid, pid, name, buf, input = {}) => pd.uploadFile({
-  uid, email: uid + '@example.com', projectId: pid, input: Object.assign({ name, size: buf.length }, input), data: buf.toString('base64')
+const send = (pd, uid, pid, name, buf, input = {}, emailVerified = true) => pd.uploadFile({
+  uid, email: uid + '@example.com', emailVerified, projectId: pid, input: Object.assign({ name, size: buf.length }, input), data: buf.toString('base64')
+});
+// An account that pays (the rest have no users doc, like an account on the trial).
+const paying = (uid, clock) => db.collection('users').doc(uid).set({
+  subscriptionStatus: 'active', subscriptionExpiryMillis: clock.t + 30 * DAY, trialEndsAt: clock.t - DAY
 });
 const usage = async (col, id) => (await db.collection(col).doc(id).get()).data() || {};
 const refused = (re) => (e) => e instanceof Error && re.test(e.message);
@@ -110,6 +114,7 @@ test('an upload is stored in the project folder and counted for the project and 
   assert.equal(folders.usedBytes, 1000);
   assert.equal(folders.fileCount, 1);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 1000, fileCount: 1 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 1000, fileCount: 1 });
   const back = await pd.downloadFile({ uid: 'view', projectId: 'p1', fileId: r.id });
   assert.equal(Buffer.from(back.data, 'base64').length, 1000);
   await assert.rejects(pd.downloadFile({ uid: 'stranger', projectId: 'p1', fileId: r.id }), refused(/not a member/));
@@ -129,13 +134,91 @@ test('two uploads at once cannot both slip under the project limit', { skip }, a
 });
 
 test('one person cannot get round the space limit by spreading files over projects', { skip }, async () => {
-  const { pd } = setup({ DRIVE_USER_QUOTA_MB: '1' });
+  const { pd, clock } = setup({ DRIVE_USER_QUOTA_MB: '1' });
+  await paying('ed', clock);
   await makeProject('p1');
   await makeProject('p2');
   await send(pd, 'ed', 'p1', 'a.pdf', pdf(700000));
   await assert.rejects(send(pd, 'ed', 'p2', 'b.pdf', pdf(700000)), refused(/across your projects/));
   // Someone else in the same project is not held back by it.
   await send(pd, 'man', 'p2', 'c.pdf', pdf(700000));
+});
+
+test('an account whose email address is not verified cannot add files', { skip }, async () => {
+  const { pd, calls } = setup();
+  await makeProject('p1');
+  await assert.rejects(send(pd, 'ed', 'p1', 'a.pdf', pdf(1000), {}, false), refused(/Verify your email address before adding files/));
+  // Not saying counts as not verified.
+  await assert.rejects(pd.uploadFile({ uid: 'ed', projectId: 'p1', input: { name: 'a.pdf', size: 1000 }, data: pdf(1000).toString('base64') }),
+    refused(/Verify your email address/));
+  assert.deepEqual(calls.upload, []);
+  assert.equal((await db.doc('driveUsers/ed').get()).exists, false);
+});
+
+test('a free trial gets a small personal space; paying lifts it to the full space', { skip }, async () => {
+  const { pd, clock } = setup({ DRIVE_TRIAL_QUOTA_MB: '1' });
+  await makeProject('p1');
+  await makeProject('p2');
+  await db.doc('users/ed').set({ subscriptionStatus: 'trial', trialEndsAt: clock.t + 10 * DAY });
+  await send(pd, 'ed', 'p1', 'a.pdf', pdf(700000));
+  await assert.rejects(send(pd, 'ed', 'p2', 'b.pdf', pdf(700000)), refused(/During the free trial each person can add up to 1\.0 MB of files, and you have added 0\.7 MB.*Subscribe/));
+  // An admin grant counts as paying; so does a subscription.
+  await db.doc('users/ed').set({ adminGrantUntil: clock.t + DAY }, { merge: true });
+  await send(pd, 'ed', 'p2', 'b.pdf', pdf(700000));
+  await db.doc('users/ed').set({ adminGrantUntil: clock.t - 1 }, { merge: true });
+  await assert.rejects(send(pd, 'ed', 'p2', 'c.pdf', pdf(100)), refused(/free trial/));
+  await paying('ed', clock);
+  await send(pd, 'ed', 'p2', 'c.pdf', pdf(100));
+  assert.equal((await usage('driveUsers', 'ed')).usedBytes, 1400100);
+});
+
+test('the whole portal has a ceiling, kept in step with uploads, failures and emptied trash', { skip }, async () => {
+  const { pd, clock, fail } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await makeProject('p1');
+  await makeProject('p2');
+  const r = await send(pd, 'ed', 'p1', 'a.pdf', pdf(600000));
+  await assert.rejects(send(pd, 'man', 'p2', 'b.pdf', pdf(600000)), (e) => e.code === 'resource-exhausted' && /file storage is full/.test(e.message));
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 600000, fileCount: 1 });
+  assert.equal((await usage('driveUsers', 'man')).usedBytes, undefined);
+
+  // A failed upload gives its share back.
+  fail.upload = () => true;
+  await assert.rejects(send(pd, 'man', 'p2', 'c.pdf', pdf(1000)), /Drive said no/);
+  fail.upload = null;
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 600000, fileCount: 1 });
+
+  // A deleted file keeps counting until Drive's trash has emptied.
+  await pd.deleteFile({ uid: 'ed', email: 'ed@example.com', projectId: 'p1', fileId: r.id });
+  assert.equal((await usage('driveTotals', 'all')).usedBytes, 600000);
+  clock.t += 31 * DAY;
+  assert.equal(await pd.releaseTrash(), 1);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
+  await send(pd, 'man', 'p2', 'b.pdf', pdf(600000));
+});
+
+test('the portal-wide count starts from the space projects already use', { skip }, async () => {
+  const { pd } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await makeProject('p1');
+  await makeProject('p2');
+  // Files added before the count existed.
+  await db.doc('driveFolders/p1').set({ usedBytes: 900000, fileCount: 3 });
+  await db.doc('driveFolders/p2').set({ usedBytes: 50000, fileCount: 1 });
+  await Promise.all([send(pd, 'ed', 'p1', 'a.pdf', pdf(40000)), send(pd, 'man', 'p2', 'b.pdf', pdf(40000))]);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 1030000, fileCount: 6 });
+  await assert.rejects(send(pd, 'ed', 'p1', 'c.pdf', pdf(40000)), refused(/file storage is full/));
+});
+
+test('emptied trash does not bring back the count of a deleted account', { skip }, async () => {
+  const { pd, clock } = setup();
+  await makeProject('p1');
+  const r = await send(pd, 'ed', 'p1', 'a.pdf', pdf(5000));
+  await pd.deleteFile({ uid: 'man', email: 'man@example.com', projectId: 'p1', fileId: r.id });
+  await db.doc('driveUsers/ed').delete();
+  clock.t += 31 * DAY;
+  assert.equal(await pd.releaseTrash(), 1);
+  assert.equal((await db.doc('driveUsers/ed').get()).exists, false);
+  assert.equal((await usage('driveFolders', 'p1')).usedBytes, 0);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
 });
 
 test('file-count limits: 5,000 per project and 20,000 per person', { skip }, async () => {
@@ -169,6 +252,7 @@ test('a deleted file keeps its space for 30 days, then the nightly job frees it'
   assert.equal(folders.usedBytes, 0);
   assert.equal(folders.fileCount, 0);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 0, fileCount: 0 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
 });
 
 test('editors delete only their own files; archived projects keep theirs', { skip }, async () => {
@@ -188,6 +272,7 @@ test('a failed Drive upload gives the reserved space back', { skip }, async () =
   await assert.rejects(send(pd, 'ed', 'p1', 'a.pdf', pdf(1000)), /Drive said no/);
   assert.equal((await usage('driveFolders', 'p1')).usedBytes, 0);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 0, fileCount: 0 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
 });
 
 test('a failed record write trashes the Drive file and gives the space back', { skip }, async () => {
@@ -201,6 +286,7 @@ test('a failed record write trashes the Drive file and gives the space back', { 
   assert.equal((await db.collection('projects/p1/files').get()).size, 0);
   assert.equal((await usage('driveFolders', 'p1')).usedBytes, 0);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 0, fileCount: 0 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
 });
 
 test('a Drive error while making folders is retried without making the folder twice', { skip }, async () => {

@@ -5,6 +5,7 @@
 //   driveFolders/{pid}   the project's Drive folder ids, space and files used,
 //                        backup bookkeeping
 //   driveUsers/{uid}     space and files one account has added, over all projects
+//   driveTotals/all      space and files every project together has used
 //   driveTrash/{id}      a deleted file's space, given back once Drive's 30-day
 //                        trash has emptied
 // Readable by members, written only here:
@@ -26,7 +27,9 @@ function config(env) {
   return {
     root: String(env.DRIVE_ROOT_FOLDER_ID || '').trim(),
     quotaBytes: Math.round(mb(env.DRIVE_PROJECT_QUOTA_MB, F.DEFAULT_QUOTA_MB) * 1048576),
-    userQuotaBytes: Math.round(mb(env.DRIVE_USER_QUOTA_MB, F.DEFAULT_USER_QUOTA_MB) * 1048576)
+    userQuotaBytes: Math.round(mb(env.DRIVE_USER_QUOTA_MB, F.DEFAULT_USER_QUOTA_MB) * 1048576),
+    trialQuotaBytes: Math.round(mb(env.DRIVE_TRIAL_QUOTA_MB, F.DEFAULT_TRIAL_QUOTA_MB) * 1048576),
+    totalQuotaBytes: Math.round(mb(env.DRIVE_TOTAL_QUOTA_MB, F.DEFAULT_TOTAL_QUOTA_MB) * 1048576)
   };
 }
 
@@ -38,6 +41,7 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
   const projectRef = (pid) => db.collection('projects').doc(pid);
   const foldersRef = (pid) => db.collection('driveFolders').doc(pid);
   const userRef = (uid) => db.collection('driveUsers').doc(uid);
+  const totalsRef = () => db.collection('driveTotals').doc('all');
   const wait = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
   const inc = (n) => FieldValue.increment(n);
 
@@ -111,35 +115,67 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     return Buffer.from(data, 'base64');
   }
 
-  async function uploadFile({ uid, email, projectId, input, data }) {
+  // The portal-wide count starts from what the projects already hold the
+  // first time it is needed, so files added before it existed still count.
+  async function ensureTotals() {
+    if ((await totalsRef().get()).exists) return;
+    let usedBytes = 0;
+    let fileCount = 0;
+    (await db.collection('driveFolders').get()).forEach((d) => {
+      usedBytes += Number(d.data().usedBytes || 0);
+      fileCount += Number(d.data().fileCount || 0);
+    });
+    // Another upload may have made it a moment ago; theirs is just as good.
+    await totalsRef().create({ usedBytes, fileCount }).catch((err) => { if (err.code !== 6) throw err; });
+  }
+
+  // `emailVerified` comes from the caller's sign-in token. Accounts are free
+  // to make, so only a confirmed address may add files, a free trial gets a
+  // small personal space, and the whole portal has a ceiling.
+  async function uploadFile({ uid, email, emailVerified, projectId, input, data }) {
     requireRoot();
+    if (emailVerified !== true) throw new F.FileError('failed-precondition', F.verifyEmailMessage());
     const project = await getProject(projectId);
     const buf = decode(data);
     const usage = (await foldersRef(projectId).get()).data() || {};
-    const { quotaBytes, userQuotaBytes } = cfg();
+    const { quotaBytes, userQuotaBytes, trialQuotaBytes, totalQuotaBytes } = cfg();
     const plan = F.planUpload(project, uid, input, buf, usage, quotaBytes);
     if (plan.itemId && !(await projectRef(projectId).collection('items').doc(plan.itemId).get()).exists) {
       bad('That item was not found. It may have been deleted.');
     }
     const folders = await ensureFolders(projectId, project);
+    await ensureTotals();
 
     // Reserve the space before uploading, so two uploads at once cannot both
     // squeeze under a limit.
     await db.runTransaction(async (tx) => {
       const p = (await tx.get(foldersRef(projectId))).data() || {};
       const u = (await tx.get(userRef(uid))).data() || {};
+      const account = (await tx.get(db.collection('users').doc(uid))).data() || {};
+      const all = (await tx.get(totalsRef())).data() || {};
       const used = Number(p.usedBytes || 0);
       if (used + plan.size > quotaBytes) bad(F.quotaMessage(used, quotaBytes));
       if (Number(p.fileCount || 0) >= F.MAX_FILES_PER_PROJECT) bad(F.projectFilesMessage());
       const mine = Number(u.usedBytes || 0);
-      if (mine + plan.size > userQuotaBytes || Number(u.fileCount || 0) >= F.MAX_FILES_PER_USER) bad(F.userQuotaMessage(mine, userQuotaBytes));
+      const personal = F.personalQuota(account, { userQuotaBytes, trialQuotaBytes }, now());
+      if (mine + plan.size > personal.bytes) {
+        bad(personal.trial ? F.trialQuotaMessage(mine, personal.bytes) : F.userQuotaMessage(mine, personal.bytes));
+      }
+      if (Number(u.fileCount || 0) >= F.MAX_FILES_PER_USER) bad(F.userQuotaMessage(mine, personal.bytes));
+      const everyone = Number(all.usedBytes || 0);
+      if (everyone + plan.size > totalQuotaBytes) {
+        console.error(`Portal file space is full: ${F.fmtMB(everyone)} of ${F.fmtMB(totalQuotaBytes)} used. Raise DRIVE_TOTAL_QUOTA_MB if the shared drive has room.`);
+        throw new F.FileError('resource-exhausted', F.totalQuotaMessage());
+      }
       tx.set(foldersRef(projectId), { usedBytes: inc(plan.size), fileCount: inc(1) }, { merge: true });
       tx.set(userRef(uid), { usedBytes: inc(plan.size), fileCount: inc(1) }, { merge: true });
+      tx.set(totalsRef(), { usedBytes: inc(plan.size), fileCount: inc(1) }, { merge: true });
     });
     const release = () => {
       const batch = db.batch();
       batch.set(foldersRef(projectId), { usedBytes: inc(-plan.size), fileCount: inc(-1) }, { merge: true });
       batch.set(userRef(uid), { usedBytes: inc(-plan.size), fileCount: inc(-1) }, { merge: true });
+      batch.set(totalsRef(), { usedBytes: inc(-plan.size), fileCount: inc(-1) }, { merge: true });
       return batch.commit();
     };
 
@@ -206,7 +242,10 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     return { deleted: true };
   }
 
-  // Give back the space of files deleted more than 30 days ago.
+  // Give back the space of files deleted more than 30 days ago. A deleted
+  // account's count is not brought back, and the portal's count is lowered
+  // only once it exists (until then ensureTotals() counts from the projects,
+  // which are lowered here).
   async function releaseTrash() {
     const due = await db.collection('driveTrash').where('releaseAt', '<=', now()).limit(2000).get();
     let released = 0;
@@ -215,9 +254,12 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
         const s = await tx.get(d.ref);
         if (!s.exists) return;
         const t = s.data();
+        const person = t.uid ? await tx.get(userRef(t.uid)) : null;
+        const totals = await tx.get(totalsRef());
         tx.delete(d.ref);
         tx.set(foldersRef(t.pid), { usedBytes: inc(-t.size), fileCount: inc(-1) }, { merge: true });
-        if (t.uid) tx.set(userRef(t.uid), { usedBytes: inc(-t.size), fileCount: inc(-1) }, { merge: true });
+        if (person && person.exists) tx.set(userRef(t.uid), { usedBytes: inc(-t.size), fileCount: inc(-1) }, { merge: true });
+        if (totals.exists) tx.set(totalsRef(), { usedBytes: inc(-t.size), fileCount: inc(-1) }, { merge: true });
         released++;
       });
     }

@@ -19,6 +19,12 @@ const DEFAULT_QUOTA_MB = 2048;
 // Space and file count one account may use across every project it adds files
 // to, so making more projects does not multiply the space.
 const DEFAULT_USER_QUOTA_MB = 10240;
+// While an account is only on the free trial (sign-ups are free), it gets a
+// small share of that.
+const DEFAULT_TRIAL_QUOTA_MB = 200;
+// Space every file added through the portal may use together (100 GB), so the
+// shared drive cannot be filled however many accounts there are.
+const DEFAULT_TOTAL_QUOTA_MB = 102400;
 const MAX_FILES_PER_PROJECT = 5000;
 const MAX_FILES_PER_USER = 20000;
 // Deleted files stay in the shared drive's trash for 30 days and keep using
@@ -105,6 +111,41 @@ function projectFilesMessage() {
 }
 function userQuotaMessage(used, quotaBytes) {
   return `You have added ${fmtMB(used)} of files across your projects, the most one account can add (${fmtMB(quotaBytes)}, or ${MAX_FILES_PER_USER} files, counting files deleted in the last 30 days). Ask the portal owner if you need more.`;
+}
+
+function trialQuotaMessage(used, quotaBytes) {
+  return `During the free trial each person can add up to ${fmtMB(quotaBytes)} of files, and you have added ${fmtMB(used)} (files deleted in the last 30 days still count). Subscribe to add more.`;
+}
+function totalQuotaMessage() {
+  return 'The portal\'s file storage is full, so files cannot be added right now. Please let the portal owner know.';
+}
+function verifyEmailMessage() {
+  return 'Verify your email address before adding files: open the link in the email we sent you, then open the Projects page again (it can send a new link).';
+}
+
+// Does this account pay (or have an admin grant, or the admin role)? Mirrors
+// userHasAccess() in index.js without the trial, which is the one kind of
+// access anybody can get just by signing up.
+function paysForAccess(u, now) {
+  if (!u) return false;
+  if (u.role === 'admin') return true;
+  if (u.subscriptionStatus === 'revoked') return false;
+  return u.compForever === true
+    || Number(u.adminGrantUntil || 0) > now
+    || (['active', 'in_grace'].includes(u.subscriptionStatus) && Number(u.subscriptionExpiryMillis || 0) > now);
+}
+
+/**
+ * The file space one person may use across all projects.
+ * @param user    their users/{uid} document
+ * @param limits  { userQuotaBytes, trialQuotaBytes }
+ * @returns { bytes, trial }  trial is true when the smaller trial space is the
+ *          limit that applies, so the message can say so.
+ */
+function personalQuota(user, limits, now) {
+  const { userQuotaBytes, trialQuotaBytes } = limits;
+  if (paysForAccess(user, now) || trialQuotaBytes >= userQuotaBytes) return { bytes: userQuotaBytes, trial: false };
+  return { bytes: trialQuotaBytes, trial: true };
 }
 
 function allowedList() { return Object.keys(FILE_TYPES).join(', '); }
@@ -281,8 +322,10 @@ function planRestore(backup, projectId, currentItemIds) {
 }
 
 module.exports = {
-  MAX_FILE_BYTES, DEFAULT_QUOTA_MB, DEFAULT_USER_QUOTA_MB, MAX_FILES_PER_PROJECT, MAX_FILES_PER_USER, TRASH_HOLD_MS,
+  MAX_FILE_BYTES, DEFAULT_QUOTA_MB, DEFAULT_USER_QUOTA_MB, DEFAULT_TRIAL_QUOTA_MB, DEFAULT_TOTAL_QUOTA_MB,
+  MAX_FILES_PER_PROJECT, MAX_FILES_PER_USER, TRASH_HOLD_MS,
   FILE_TYPES, CATEGORIES, KEEP, MAX_BACKUP_ITEMS, MAX_BACKUP_FILES, BACKUP_FORMAT, BACKUP_VERSION,
-  FileError, cleanName, planUpload, quotaMessage, projectFilesMessage, userQuotaMessage, canDeleteFile, matchesMagic,
+  FileError, cleanName, planUpload, quotaMessage, projectFilesMessage, userQuotaMessage, trialQuotaMessage,
+  totalQuotaMessage, verifyEmailMessage, personalQuota, canDeleteFile, matchesMagic,
   atLeast, roleOf, fmtMB, toJson, fromJson, fingerprintOf, buildBackup, backupName, backupsToPrune, planRestore
 };
