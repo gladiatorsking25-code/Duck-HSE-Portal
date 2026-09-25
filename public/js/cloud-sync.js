@@ -14,7 +14,8 @@
 //     once the server has the write, so a save made offline, or cut off by
 //     leaving the page, is sent again: after the first snapshot that comes
 //     from the server, every record that is pending, missing from the account
-//     or newer here is pushed again. Deletes are written as tombstones and
+//     or newer here is pushed again (except records from before this device
+//     had an owner, see needsPush). Deletes are written as tombstones and
 //     queued the same way (DELETES_KEY) until the server has them.
 // A slow or offline connection never blocks or breaks the local save.
 //
@@ -32,6 +33,9 @@ const CloudSync = (function () {
   // Deletes not yet confirmed by the server: [{ c: collection, id, at }].
   // Kept with the account's records when the device changes hands.
   const DELETES_KEY = 'cla_sync_deletes';
+  // Checklists deleted on another device whose certificate photos are still
+  // to be deleted here: [id]. js/certificate-storage.js empties it.
+  const CERT_PURGE_KEY = 'cla_cert_purge';
 
   let listeners = {};         // collection -> unsubscribe
   let lastDocs = {};          // collection -> { docs, pendingIds } from the latest snapshot
@@ -76,9 +80,10 @@ const CloudSync = (function () {
   }
 
   // Flags that only mean something on this device: `_pending` (not yet in
-  // the account) and `_restored` (brought back from a backup, see
-  // DB.importAll).
-  const LOCAL_FLAGS = ['_pending', '_restored'];
+  // the account), `_restored` (brought back from a backup, see
+  // DB.importAll) and `_legacy` (here from before the device had an owner,
+  // see DeviceData in js/firebase-auth.js).
+  const LOCAL_FLAGS = ['_pending', '_restored', '_legacy'];
 
   // The copy sent to Firestore: JSON-safe (no undefined values) and without
   // the local-only flags.
@@ -129,7 +134,9 @@ const CloudSync = (function () {
   }
 
   // Local records the account is missing or has an older copy of. Documents
-  // this device is still writing count as up to date.
+  // this device is still writing count as up to date. A record from before
+  // the device had an owner that the account does not have may have been
+  // deleted elsewhere, or be someone else's: it stays here until edited.
   function needsPush(local, cloudDocs, pendingIds) {
     const cloud = new Map();
     (cloudDocs || []).forEach((d) => { if (d && d.id) cloud.set(d.id, d); });
@@ -137,6 +144,7 @@ const CloudSync = (function () {
       if (!r || !r.id || r.deleted === true) return false;
       if (pendingIds && pendingIds.has(r.id)) return false;
       const c = cloud.get(r.id);
+      if (!c && r._legacy && !r._pending) return false;
       return !c || !!r._pending || stampOf(r) > stampOf(c);
     });
   }
@@ -203,9 +211,13 @@ const CloudSync = (function () {
 
   function sendRecord(uid, name, record) {
     const stamp = stampOf(record);
-    let data;
+    let data, write;
     try { data = cloudCopy(record); } catch (e) { return Promise.resolve(false); }
-    return track(name, record.id, userCollection(uid, name).doc(record.id).set(data)
+    // An id Firestore cannot take (from a hand-edited backup) throws here. It
+    // must not stop the rest of the list from being sent.
+    try { write = userCollection(uid, name).doc(record.id).set(data); }
+    catch (e) { console.error('Cloud push skipped for this record:', e); return Promise.resolve(false); }
+    return track(name, record.id, write
       .then(() => { markSynced(uid, name, record.id, stamp); return true; })
       .catch((err) => {
         if (err && err.code === 'permission-denied') denied = true;
@@ -216,12 +228,35 @@ const CloudSync = (function () {
 
   // A tombstone holds exactly { deleted, updatedAt } (see firestore.rules).
   function sendTombstone(uid, name, id, at) {
-    return track(name, id, userCollection(uid, name).doc(id).set({ deleted: true, updatedAt: at })
+    let write;
+    try { write = userCollection(uid, name).doc(id).set({ deleted: true, updatedAt: at }); }
+    catch (e) {
+      // Not an id the account can hold, so there is nothing there to delete.
+      console.error('Cloud delete skipped for this record:', e);
+      if (owns(uid)) dropDeletes(name, [{ id, at }]);
+      return Promise.resolve(false);
+    }
+    return track(name, id, write
       .then(() => { if (owns(uid)) dropDeletes(name, [{ id, at }]); return true; })
       .catch((err) => {
         console.error('Cloud delete failed (removed on this device, will retry):', err);
         return false;
       }));
+  }
+
+  // Deletes the certificate photos of checklists that left this device with a
+  // delete made on another one. Pages without js/certificate-storage.js
+  // queue the ids, and it deletes them the next time it opens.
+  function purgeCertificates(local, merged) {
+    const kept = new Set(merged.filter((r) => r && r.id).map((r) => r.id));
+    const gone = local.filter((r) => r && r.id && !kept.has(r.id)).map((r) => r.id);
+    if (!gone.length) return;
+    if (typeof CertificateStore !== 'undefined') {
+      gone.forEach((id) => CertificateStore.deleteForChecklist(id).catch(() => {}));
+      return;
+    }
+    const queue = readJson(CERT_PURGE_KEY, []);
+    writeJson(CERT_PURGE_KEY, [...new Set((Array.isArray(queue) ? queue : []).concat(gone))]);
   }
 
   // Applies one snapshot of a collection: merge, then (once the server's view
@@ -235,8 +270,9 @@ const CloudSync = (function () {
     if (!Array.isArray(local)) local = [];
     const merged = mergeDocs(local, docs.filter((d) => !pendingIds.has(d.id)), deletesFor(name));
     const after = JSON.stringify(merged);
-    if (after !== (before || '[]')) {
-      if (writeJson(key, merged)) announce({ reason: 'merge', collection: name });
+    if (after !== (before || '[]') && writeJson(key, merged)) {
+      announce({ reason: 'merge', collection: name });
+      if (name === 'checklists') purgeCertificates(local, merged);
     }
     if (!reconcile) return;
     if (!denied) {
@@ -285,7 +321,10 @@ const CloudSync = (function () {
       if (gen !== generation) return;   // stopped or restarted meanwhile
       startingUid = null;
       if (claimed === 'failed') {
+        // The other account's records stay hidden and saves are refused, so
+        // sign out: the sign-in page (watchAndSync) lets the person try again.
         console.error('Cloud sync not started: another account\'s records are still on this device.');
+        try { await CloudAuth.signOutCloud(); } catch (e) { /* already signed out */ }
         return;
       }
       currentUid = uid;
@@ -330,8 +369,10 @@ const CloudSync = (function () {
 
     // Waits (at most `ms`) for the writes in flight, so a page can navigate
     // away after a save without cutting the write off. Resolves true if they
-    // all finished.
+    // all finished. Offline the server cannot confirm them, so it resolves
+    // false at once (the records stay pending and are sent later).
     flush(ms = 4000) {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return Promise.resolve(false);
       const all = Promise.all([...inflight.values()]).then(() => true);
       return Promise.race([all, new Promise((resolve) => setTimeout(() => resolve(false), ms))]);
     },

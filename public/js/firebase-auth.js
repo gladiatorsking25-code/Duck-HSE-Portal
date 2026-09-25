@@ -97,12 +97,15 @@ const CloudAuth = {
 // in here again. The evidence and photo databases are not moved; each account
 // opens its own database name instead (idbName), except the account that first
 // adopted the databases made before this existed. The first sign-in on a
-// device with no recorded owner adopts whatever is already here.
+// device with no recorded owner adopts whatever is already here, but copies a
+// record the account does not have into it only once it is edited
+// (markLegacy).
 //
 // While a swap is under way 'cla_data_swap' is set. js/storage.js then reads
 // the lists as empty and refuses to write, so a page that loads mid-swap never
 // shows or overwrites the previous account's records. If the tab closes mid-
-// swap, the next claim() finishes the job from the stash.
+// swap, the next claim() finishes the job from the stash. If the swap fails,
+// the marker stays until the owner signs in again or another claim succeeds.
 const DeviceData = (function () {
   'use strict';
 
@@ -110,8 +113,9 @@ const DeviceData = (function () {
   const LEGACY_IDB_KEY = 'cla_data_legacy_uid';
   const SWAP_KEY = 'cla_data_swap';
   // The keys that belong to one account. The first three must match DB.KEYS in
-  // js/storage.js; the last is js/cloud-sync.js's queue of unsent deletes.
-  const LIST_KEYS = ['cla_assessments', 'cla_permits', 'cla_checklists', 'cla_sync_deletes'];
+  // js/storage.js; then js/cloud-sync.js's queue of unsent deletes and its
+  // queue of certificate photos to delete (js/certificate-storage.js).
+  const LIST_KEYS = ['cla_assessments', 'cla_permits', 'cla_checklists', 'cla_sync_deletes', 'cla_cert_purge'];
   const COUNTER_PREFIX = 'cla_permit_counter';
   const STASH_DB = 'cla_device_stash_v1';
   const STASH_STORE = 'stash';
@@ -198,6 +202,25 @@ const DeviceData = (function () {
     return complete;
   }
 
+  // Records on a device with no recorded owner were made before accounts kept
+  // their records apart. Some were deleted on another device since, and some
+  // may be another person's, so they stay on this device only until someone
+  // edits one (js/cloud-sync.js needsPush; DB._stamp clears the mark). A list
+  // that cannot be rewritten (storage full) is left as it is.
+  function markLegacy() {
+    LIST_KEYS.slice(0, 3).forEach((k) => {
+      const list = readJson(k);
+      if (!Array.isArray(list)) return;
+      let changed = false;
+      list.forEach((r) => {
+        if (r && typeof r === 'object' && !r._pending && !r._legacy) { r._legacy = true; changed = true; }
+      });
+      if (!changed) return;
+      try { localStorage.setItem(k, JSON.stringify(list)); }
+      catch (e) { console.warn('Could not mark the records already on this device', e); }
+    });
+  }
+
   // ---- The stash (IndexedDB) ----
   let stashDb = null;
   function openStash() {
@@ -215,13 +238,24 @@ const DeviceData = (function () {
     stashDb.catch(() => { stashDb = null; });
     return stashDb;
   }
+  // On a completely full disk a transaction can stall without ever firing
+  // complete, error or abort (see js/audit-store.js). A watchdog turns that
+  // into a failed claim instead of records hidden for good.
+  const STASH_STALL_MS = 25000;
   function stashTx(mode, fn) {
     return openStash().then((db) => new Promise((resolve, reject) => {
       const tx = db.transaction(STASH_STORE, mode);
-      const req = fn(tx.objectStore(STASH_STORE));
-      tx.oncomplete = () => resolve(req && mode === 'readonly' ? (req.result || null) : undefined);
-      tx.onerror = () => reject(tx.error || new Error('Device stash operation failed.'));
-      tx.onabort = () => reject(tx.error || new Error('Device stash operation was aborted.'));
+      let settled = false;
+      const finish = (fnSettle, v) => { if (settled) return; settled = true; clearTimeout(timer); fnSettle(v); };
+      const timer = setTimeout(() => {
+        try { tx.abort(); } catch (e) { /* already finished */ }
+        finish(reject, new Error('The device stash stopped responding.'));
+      }, STASH_STALL_MS);
+      let req;
+      try { req = fn(tx.objectStore(STASH_STORE)); } catch (e) { finish(reject, e); return; }
+      tx.oncomplete = () => finish(resolve, req && mode === 'readonly' ? (req.result || null) : undefined);
+      tx.onerror = () => finish(reject, tx.error || new Error('Device stash operation failed.'));
+      tx.onabort = () => finish(reject, tx.error || new Error('Device stash operation was aborted.'));
     }));
   }
   const getStash = (uid) => stashTx('readonly', (s) => s.get(uid));
@@ -265,6 +299,7 @@ const DeviceData = (function () {
       // No move needed: drop a marker left by claim() or by a closed tab.
       localStorage.removeItem(SWAP_KEY);
       if (current === uid) return 'same';
+      markLegacy();
       const left = await getStash(uid).catch(() => null);
       const merged = left ? mergeIntoActive(left) : false;
       localStorage.setItem(OWNER_KEY, uid);
@@ -281,8 +316,8 @@ const DeviceData = (function () {
     return 'switched';
   }
 
-  // Returns 'same', 'adopted', 'switched' or 'failed' (nothing was moved and
-  // the previous owner's records are still the active ones).
+  // Returns 'same', 'adopted', 'switched' or 'failed' (nothing was moved: the
+  // previous owner's records are still the active ones, but stay hidden).
   async function claim(uid) {
     if (!uid) return 'same';
     try {
@@ -297,8 +332,15 @@ const DeviceData = (function () {
       }
       return await run();
     } catch (e) {
+      // Keep another account's records hidden (and writes refused): this
+      // account must not see or change them. The owner signing in again
+      // drops the marker, and another account's claim starts from it.
       const swap = pendingSwap();
-      if (swap && !swap.parked) localStorage.removeItem(SWAP_KEY);
+      const current = owner();
+      try {
+        if (current && current !== uid) { if (!swap || !swap.parked) setSwap(current, uid, false); }
+        else if (swap && !swap.parked) localStorage.removeItem(SWAP_KEY);
+      } catch (e2) { /* storage full: the caller signs out anyway */ }
       console.error('Could not set aside the previous account\'s records on this device', e);
       return 'failed';
     }

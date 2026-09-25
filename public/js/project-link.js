@@ -50,13 +50,22 @@ const ProjectLink = (function () {
   }
 
   // Create/update the project item for a record. Waits (up to 10 s) so a page
-  // that navigates away right after saving doesn't cut the write off.
+  // that navigates away right after saving doesn't cut the write off. Offline
+  // nothing is sent (see Projects.upsertLinkedItem): the result says so with
+  // `offline: true`, and the next save made online updates the project.
   async function sync(projectId, ref, input) {
     if (!projectId || typeof Projects === 'undefined') return { ok: true };
+    const OFFLINE = { ok: false, offline: true, error: 'you are offline' };
+    const offline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (offline()) return OFFLINE;
     const timeout = new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: 'timeout' }), 10000));
     const work = Projects.upsertLinkedItem(projectId, ref, input)
       .then(() => ({ ok: true }))
-      .catch((err) => { console.error('Project link failed', err); return { ok: false, error: err.message || String(err) }; });
+      .catch((err) => {
+        console.error('Project link failed', err);
+        if ((err && err.code === 'unavailable') || offline()) return OFFLINE;
+        return { ok: false, error: err.message || String(err) };
+      });
     return Promise.race([work, timeout]);
   }
 

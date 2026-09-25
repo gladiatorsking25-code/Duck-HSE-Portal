@@ -11,6 +11,14 @@
 
   const LISTS = ['assessments', 'permits', 'checklists'];
 
+  // An id that cannot be a Firestore document id would stop cloud sync for
+  // its whole list (js/cloud-sync.js). A record with no id gets one on import.
+  function badId(id) {
+    if (id == null || id === '') return false;
+    return typeof id !== 'string' || id.indexOf('/') !== -1 || id === '.' || id === '..' ||
+      /^__.*__$/.test(id) || id.length > 1500;
+  }
+
   // Returns { ok: true, counts } or { ok: false, error } with a message for
   // the person importing.
   function check(data) {
@@ -22,7 +30,7 @@
     }
     if (!LISTS.some((k) => Array.isArray(data[k]))) return { ok: false, error: notBackup };
     const damaged = LISTS.some((k) => data[k] != null && (!Array.isArray(data[k])
-      || data[k].some((r) => !r || typeof r !== 'object' || Array.isArray(r))));
+      || data[k].some((r) => !r || typeof r !== 'object' || Array.isArray(r) || badId(r.id))));
     if (damaged) return { ok: false, error: 'This backup file is damaged, so nothing was imported.' };
     return { ok: true, counts: countsOf(data) };
   }

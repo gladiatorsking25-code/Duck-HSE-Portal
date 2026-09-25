@@ -158,6 +158,19 @@ test('other files are refused before anything is changed', () => {
   }
 });
 
+test('records whose id cannot name a cloud document make the file damaged', () => {
+  const bad = [7, { x: 1 }, true, 'P-1/2', '.', '..', '__id__', 'x'.repeat(1501)];
+  for (const id of bad) {
+    const r = BackupImport.check({ permits: [{ id: 'P-1' }, { id }] });
+    assert.equal(r.ok, false, JSON.stringify(id));
+    assert.match(r.error, /damaged/);
+  }
+  // No id (one is given on import), and ordinary ids, are fine.
+  for (const id of [undefined, null, '', 'P-1712345678901', 'C-1-2', '_x_', '__x', 'x'.repeat(1500)]) {
+    assert.equal(BackupImport.check({ checklists: [{ id }] }).ok, true, JSON.stringify(id));
+  }
+});
+
 test('the result uses the counts importAll returns, else the file counts', () => {
   const data = { assessments: [{}, {}], permits: [{}], checklists: [{}, {}, {}] };
   assert.deepEqual(BackupImport.resultCounts({ assessments: 0, permits: 1, checklists: 2 }, data), { assessments: 0, permits: 1, checklists: 2 });

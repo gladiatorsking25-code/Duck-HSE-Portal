@@ -64,10 +64,13 @@ const DB = {
   // Every save carries the time it was made (newer wins when devices sync)
   // and stays pending until the account has it (js/cloud-sync.js). The time
   // never goes backwards for a record, even if this device's clock is behind.
+  // A record kept from before the device had an owner (`_legacy`, see
+  // DeviceData in js/firebase-auth.js) goes to the account once edited.
   _stamp(record, previous) {
     const prev = Math.max(Number(record.updatedAt) || 0, Number(previous && previous.updatedAt) || 0);
     record.updatedAt = Math.max(Date.now(), prev + 1);
     record._pending = true;
+    delete record._legacy;
     return record;
   },
 
@@ -188,7 +191,7 @@ const DB = {
 
   // ---- Backup / restore ----
   exportAll() {
-    const clean = (list) => list.map(r => { const c = Object.assign({}, r); delete c._pending; delete c._restored; return c; });
+    const clean = (list) => list.map(r => { const c = Object.assign({}, r); delete c._pending; delete c._restored; delete c._legacy; return c; });
     return {
       exportedAt: new Date().toISOString(),
       assessments: clean(this.getAssessments()),
