@@ -19,8 +19,8 @@
   "navigationDividerColor": "#16283a",
   "navigationDividerColorDark": "#0f1b26",
   "backgroundColor": "#16283a",
-  "enableNotifications": false,
-  "startUrl": "/index.html",
+  "enableNotifications": true,
+  "startUrl": "/index.html?src=twa",
   "iconUrl": "https://HOST_DOMAIN/assets/icons/icon-512.png",
   "maskableIconUrl": "https://HOST_DOMAIN/assets/icons/icon-maskable-512.png",
   "splashScreenFadeOutDuration": 300,
@@ -30,26 +30,30 @@
     {
       "name": "Projects",
       "shortName": "Projects",
-      "url": "/projects.html",
+      "url": "/projects.html?src=twa",
       "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
     },
     {
       "name": "New inspection",
       "shortName": "Inspect",
-      "url": "/checklist.html",
+      "url": "/checklist.html?src=twa",
       "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
     },
     {
       "name": "New lift assessment",
       "shortName": "Lift",
-      "url": "/assessment.html",
+      "url": "/assessment.html?src=twa",
       "chosenIconUrl": "https://HOST_DOMAIN/assets/icons/icon-192.png"
     }
   ],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://HOST_DOMAIN/manifest.webmanifest",
   "fallbackType": "customtabs",
-  "features": {},
+  "features": {
+    "playBilling": {
+      "enabled": true
+    }
+  },
   "alphaDependencies": {
     "enabled": false
   },
