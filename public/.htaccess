@@ -5,9 +5,20 @@
 Options -Indexes
 DirectoryIndex index.html
 
-# ---- Always HTTPS ---------------------------------------------------------
+# ---- One address, always HTTPS --------------------------------------------
+# The site answers on one address only. Sign-in, the records kept on the
+# device and the offline copy all belong to one address, so a visitor on
+# www.<your-domain> is sent to <your-domain>. APP_ORIGIN in functions/.env must
+# be that same address (docs/DEPLOY.md, step 4).
+# To use the www. address instead (only if the site is on a bare domain such
+# as example.com, not on a subdomain such as hse.example.com), replace the
+# first RewriteCond/RewriteRule pair below with:
+#   RewriteCond %{HTTP_HOST} !^www\. [NC]
+#   RewriteRule ^ https://www.%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  RewriteCond %{HTTP_HOST} ^www\.(.+)$ [NC]
+  RewriteRule ^ https://%1%{REQUEST_URI} [L,R=301]
   RewriteCond %{HTTPS} !=on
   RewriteCond %{HTTP:X-Forwarded-Proto} !=https
   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
@@ -32,13 +43,21 @@ DirectoryIndex index.html
   # event handlers, so 'unsafe-inline' is needed for now; everything else is
   # restricted to this site and the Google/Firebase services the app calls.
   # localhost ports are the optional on-device AI model servers (js/hse-ai.js).
-  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.run.app https://www.gstatic.com https://accounts.google.com http://localhost:11434 http://localhost:1234 http://127.0.0.1:11434 http://127.0.0.1:1234; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com https://*.firebaseapp.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+  # blob: in frame-src and media-src lets the audit viewer (js/audit-viewer.js)
+  # preview PDF, video and audio evidence. That is safe only because the viewer
+  # types every file from its name and never shows a web page or SVG this way.
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.run.app https://www.gstatic.com https://accounts.google.com http://localhost:11434 http://localhost:1234 http://127.0.0.1:11434 http://127.0.0.1:1234; frame-src blob: https://accounts.google.com https://docs.google.com https://drive.google.com https://*.firebaseapp.com; media-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 
-  # The service worker and HTML must never be cached stale.
-  <FilesMatch "(\.html|sw\.js|manifest\.webmanifest)$">
+  # HTML, CSS, JavaScript (the service worker too) and the manifest are checked
+  # with the server on every load. That is cheap when nothing changed, and a
+  # new upload is never mixed with last week's scripts. The offline copy comes
+  # from the service worker, not from this.
+  <FilesMatch "\.(html|css|js|webmanifest)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
-  <FilesMatch "\.(css|js|png|ico|svg|woff2)$">
+  # Images and fonts rarely change and may be kept for a week. When two blocks
+  # match a file, the later one wins, so no script or page may match this one.
+  <FilesMatch "\.(png|jpe?g|webp|gif|ico|svg|woff2?)$">
     Header set Cache-Control "public, max-age=604800"
   </FilesMatch>
 </IfModule>

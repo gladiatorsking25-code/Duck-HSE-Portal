@@ -114,6 +114,7 @@ export function checkAll(repo = REPO) {
     const origin = env.APP_ORIGIN || '';
     if (!origin || /your-domain/.test(origin)) r.errors.push('APP_ORIGIN in functions/.env is not set to your website address.');
     else if (!/^https:\/\/[^/\s]+$/.test(origin)) r.errors.push(`APP_ORIGIN must be https://your-domain with no path or trailing slash; it is "${origin}".`);
+    else if (/^https:\/\/www\./i.test(origin)) r.warnings.push(`APP_ORIGIN is ${origin}, but public/.htaccess sends www. visitors to the address without www. Set APP_ORIGIN to ${origin.replace(/^https:\/\/www\./i, 'https://')}, unless you changed .htaccess to use the www. address (docs/DEPLOY.md, step 4).`);
     else r.ok.push(`APP_ORIGIN is ${origin}.`);
     const price = env.STRIPE_PRICE_MONTHLY || '';
     if (!/^price_[A-Za-z0-9]+$/.test(price) || price === 'price_xxx') r.errors.push('STRIPE_PRICE_MONTHLY in functions/.env is not a Stripe price ID (price_…). Card payments will not work (docs/PAYMENTS.md).');
