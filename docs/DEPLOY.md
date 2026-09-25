@@ -28,8 +28,9 @@ Follow the steps in order the first time. After that, see
 - **Google Workspace** with a shared drive, for project files and backups
   ([DRIVE_FILES.md](DRIVE_FILES.md)). Optional: without it, everything else
   works and the Files panel says storage is not set up.
-- A computer with **Node.js 20 or newer** (<https://nodejs.org>, the LTS
-  version). Windows, macOS and Linux all work.
+- A computer with **Node.js 22 or newer** (<https://nodejs.org>, the LTS
+  version). Windows, macOS and Linux all work. The Cloud Functions run on
+  Node.js 22 too (`firebase.json`).
 
 **Never paste a secret key into a chat, an email, or any file in the
 repository.** Secrets go only into Firebase's secret storage, with the commands
@@ -62,9 +63,10 @@ In <https://console.firebase.google.com>, open the project:
    alert: Google Cloud Console → **Billing → Budgets & alerts → Create budget**,
    for example 10 USD a month, with email alerts.
 2. **Authentication → Sign-in method:** turn on **Email/Password**.
-3. **Authentication → Settings → Authorized domains:** add your domain, for
-   example `hse.example.com`. If people may open it both with and without
-   `www.`, add both.
+3. **Authentication → Settings → Authorized domains:** add your site's
+   domain without `www.`, for example `hse.example.com`. The website sends
+   anyone who opens the `www.` address to this one (`public/.htaccess`), so
+   everyone signs in on the same address.
 4. **Firestore Database:** it must exist (production mode). Its location cannot
    be changed later; see the note on data location in `public/privacy.html`,
    section 3a.
@@ -91,7 +93,7 @@ cp functions/.env.example functions/.env
 
 | Setting | Value |
 |---|---|
-| `APP_ORIGIN` | Your site address exactly as customers open it, e.g. `https://hse.example.com` (https, no trailing slash). Stripe sends customers back here. |
+| `APP_ORIGIN` | Your site address without `www.`, e.g. `https://hse.example.com` (https, no trailing slash). It must be exactly the address the website sends everyone to (`public/.htaccess` sends `www.` visitors to the address without it). Stripe sends customers back here. |
 | `STRIPE_PRICE_MONTHLY` | The Stripe price ID (`price_…`). |
 | `STRIPE_PRICE_YEARLY` | Optional second price. |
 | `STRIPE_AUTOMATIC_TAX` | `false` unless Stripe Tax is set up. |
@@ -154,8 +156,9 @@ firebase deploy --only functions
    - Delete the zip afterwards.
 4. Check that `public_html` now contains `index.html`, the `js` and `css`
    folders, and **`.htaccess`**. If you cannot see `.htaccess`, turn on "Show
-   hidden files" in File Manager's settings. It forces HTTPS and sets the
-   security headers, so it must be there.
+   hidden files" in File Manager's settings. It forces HTTPS, sends the
+   `www.` address to the address without it, and sets the security headers,
+   so it must be there.
 
 FTP works too (hPanel → **Files → FTP Accounts**, then FileZilla): upload the
 *contents* of `public/`, including `.htaccess`, into `public_html`.
@@ -237,7 +240,7 @@ Then switch Stripe to live payments: [PAYMENTS.md](PAYMENTS.md), step 8.
 | What you see | What to check |
 |---|---|
 | The site does not open, or shows Hostinger's default page | SSL is active (step 7.1); the files are in `public_html` itself, not in a subfolder; the default placeholder file is deleted. |
-| "This domain is not authorized" or sign-in fails at once | Step 2.3: add the exact domain (with and without `www.`) to Authorized domains. |
+| "This domain is not authorized" or sign-in fails at once | Step 2.3: add the exact domain, without `www.`, to Authorized domains. |
 | Pages look unstyled, or the browser console mentions a Content Security Policy | `.htaccess` was changed or a new outside service is being called; compare with the one in `public/`. |
 | "Card payments are not set up yet" | The Stripe secret key is not stored, or the functions were not redeployed after storing it. |
 | Paid on Stripe, but the account still shows the paywall | The webhook: address, events and signing secret ([PAYMENTS.md](PAYMENTS.md), troubleshooting). |

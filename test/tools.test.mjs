@@ -68,6 +68,16 @@ test('placeholder settings and mismatches are reported', () => {
   rmSync(dir, { recursive: true });
 });
 
+test('a www. APP_ORIGIN is flagged, since the website sends www. to the bare address', () => {
+  const dir = fakeRepo(Object.assign({}, GOOD, {
+    'functions/.env': 'APP_ORIGIN=https://www.example.com\nSTRIPE_PRICE_MONTHLY=price_123abc\nDRIVE_ROOT_FOLDER_ID=0ABCdef\n'
+  }));
+  const r = checkAll(dir);
+  assert.deepEqual(r.errors, []);
+  assert.match(r.warnings.join('\n'), /APP_ORIGIN is https:\/\/www\.example\.com.*Set APP_ORIGIN to https:\/\/example\.com,/);
+  rmSync(dir, { recursive: true });
+});
+
 test('the deploy target must be the project the website uses', () => {
   const dir = fakeRepo(Object.assign({}, GOOD, { '.firebaserc': '{"projects":{"default":"other-proj"}}' }));
   assert.match(checkAll(dir).errors.join('\n'), /deploys to "other-proj" but the website is set up for "my-proj"/);

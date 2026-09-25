@@ -4,7 +4,7 @@
   },
   "functions": {
     "source": "functions",
-    "runtime": "nodejs20"
+    "runtime": "nodejs22"
   },
   "emulators": {
     "auth": { "host": "127.0.0.1", "port": 9099 },

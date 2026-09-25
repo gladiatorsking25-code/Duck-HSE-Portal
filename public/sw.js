@@ -22,6 +22,37 @@ const OFFLINE_URL = 'offline.html';
 // long enough that a working connection nearly always wins the race.
 const ASSET_NETWORK_TIMEOUT_MS = 2000;
 
+// The Firebase SDK the pages load from Google (js/firebase-init.js). Without
+// it, sign-in cannot start offline, so it is kept with the rest of the app.
+// Each file lives at a versioned address that never changes, so it is served
+// from the offline copy first. Keep FIREBASE_SDK_VERSION in step with
+// SDK_VERSION in js/firebase-init.js.
+const FIREBASE_SDK_VERSION = '10.13.0';
+const FIREBASE_SDK_URLS = ['app', 'auth', 'firestore', 'functions'].map(
+  (name) => `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-${name}-compat.js`);
+
+// Stores one Firebase SDK file. Google serves these files with CORS, which
+// lets the worker see that the download really worked before keeping it. If
+// that is ever refused, the file is fetched the way a <script> tag fetches it
+// (no-cors); cache.add() does not accept that kind of ("opaque") response, so
+// the copy is stored with put().
+async function cacheSdkFile(cache, url) {
+  let res = null;
+  try { res = await fetch(url, { mode: 'cors' }); } catch (e) { /* no CORS: try no-cors below */ }
+  if (!res) res = await fetch(new Request(url, { mode: 'no-cors' }));
+  if (res.ok || res.type === 'opaque') await cache.put(url, res);
+}
+
+// Firebase and Google services (sign-in, Firestore, the functions, Drive)
+// must always go straight to the network: they keep their own offline state.
+// Only other sites' addresses match, so this site's own js/firebase-*.js
+// files are still served from the offline copy. Google Fonts are handled in
+// the fetch handler below.
+function isNetworkOnly(url) {
+  if (url.origin === self.location.origin || url.hostname === 'fonts.googleapis.com') return false;
+  return /(^|\.)(googleapis\.com|google\.com|firebaseio\.com|firebaseapp\.com|cloudfunctions\.net|run\.app)$/.test(url.hostname);
+}
+
 // Paths the worker must never cache or serve: credentials and environment
 // files. None of them belongs in this folder at all (START-HERE.txt step 3),
 // and this list must never be added to PRECACHE_URLS below.
@@ -132,6 +163,13 @@ self.addEventListener('install', (event) => {
         console.warn('[sw] precache skipped:', url, e && e.message);
       }
     }));
+    await Promise.all(FIREBASE_SDK_URLS.map(async (url) => {
+      try {
+        await cacheSdkFile(cache, url);
+      } catch (e) {
+        console.warn('[sw] precache skipped:', url, e && e.message);
+      }
+    }));
   })());
   // Don't skipWaiting automatically — js/pwa.js asks the user first, so a lift
   // assessment being typed in isn't reloaded out from under someone.
@@ -167,9 +205,8 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
-  // Never touch Firebase / Firestore traffic — those must always hit the
-  // network and have their own offline persistence.
-  if (/firebase|firestore|googleapis\.com\/(identitytoolkit|securetoken)/.test(url.href)) return;
+  // Never touch Firebase / Google service traffic (see isNetworkOnly).
+  if (isNetworkOnly(url)) return;
 
   // Never cache a credential, even one deployed by mistake: the same-origin
   // branch below stores every response it fetches, which would copy a leaked
@@ -191,6 +228,21 @@ self.addEventListener('fetch', (event) => {
         const offline = await caches.match(OFFLINE_URL);
         return offline || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
       }
+    })());
+    return;
+  }
+
+  // ---- Firebase SDK: offline copy first (its address includes the version) ----
+  if (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(request, { ignoreVary: true });
+      if (cached) return cached;
+      const res = await fetch(request);
+      // Not kept at install (no connection then, or a new SDK version): keep a
+      // checked copy now for the next offline start.
+      event.waitUntil(cacheSdkFile(cache, url.href).catch(() => {}));
+      return res;
     })());
     return;
   }
@@ -222,7 +274,9 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       const cache = await caches.open(CACHE_NAME);
 
-      const fromNetwork = fetch(request).then(res => {
+      // 'no-cache' asks the server whether the file changed instead of taking
+      // a copy the browser may have kept from an older upload.
+      const fromNetwork = fetch(request, { cache: 'no-cache' }).then(res => {
         if (res && res.ok) cache.put(request, res.clone());
         return res;
       });

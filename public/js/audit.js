@@ -116,6 +116,12 @@
     return { image: '🖼', pdf: '📕', video: '🎞', audio: '🎧', xlsx: '📊', docx: '📝', html: '🌐', text: '📄' }[k] || '📎';
   }
 
+  // Only web links open from the page. Links added here are checked in
+  // addLink; this also covers an audit imported from someone else's pack.
+  function isWebLink(url) {
+    return /^https?:\/\//i.test(String(url || ''));
+  }
+
   function renderItem(it) {
     const files = it.files || [], links = it.links || [];
     const statusOpts = Object.keys(AuditPack.STATUS).map((k) =>
@@ -134,7 +140,7 @@
           ${files.map((f) => `<span class="fchip"><button type="button" class="fchip-open" data-view="${esc(f.id)}" title="View">
             <span class="fchip-ic">${fileIcon(f.name, f.type)}</span><span class="fchip-name">${esc(f.name)}</span><span class="fchip-size">${fmtSize(f.size)}</span></button>
             <button type="button" class="fchip-x" data-rmfile="${esc(f.id)}" aria-label="Remove ${esc(f.name)}">×</button></span>`).join('')}
-          ${links.map((l, i) => `<span class="fchip fchip-link"><a class="fchip-open" href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc(l.url)}">
+          ${links.map((l, i) => `<span class="fchip fchip-link"><a class="fchip-open"${isWebLink(l.url) ? ` href="${esc(l.url)}"` : ''} target="_blank" rel="noopener" title="${esc(l.url)}">
             <span class="fchip-ic">🔗</span><span class="fchip-name">${esc(l.label || l.url)}</span></a>
             <button type="button" class="fchip-x" data-rmlink="${i}" aria-label="Remove link">×</button></span>`).join('')}
         </div>` : ''}
