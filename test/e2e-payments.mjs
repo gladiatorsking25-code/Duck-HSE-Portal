@@ -70,6 +70,8 @@ async function run() {
       if (route === 'POST /v1/checkout/sessions') return send(200, { id: 'cs_e2e', object: 'checkout.session', url: 'https://checkout.stripe.com/c/pay/cs_e2e' });
       if (route === 'POST /v1/billing_portal/sessions') return send(200, { id: 'bps_e2e', object: 'billing_portal.session', url: 'https://billing.stripe.com/p/session/e2e' });
       if (route === 'GET /v1/subscriptions/sub_e2e' && subscription) return send(200, subscription);
+      // Checkout first lists the customer's subscriptions so it never sells a second one.
+      if (route === 'GET /v1/subscriptions') return send(200, { object: 'list', url: '/v1/subscriptions', has_more: false, data: subscription ? [subscription] : [] });
       send(404, { error: { type: 'invalid_request_error', message: 'No such resource: ' + route } });
     });
   });

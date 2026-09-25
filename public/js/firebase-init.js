@@ -15,7 +15,7 @@ let firebaseReadyPromise = null;
 
 if (FIREBASE_READY) {
   firebaseReadyPromise = new Promise((resolve, reject) => {
-    const SDK_VERSION = '10.13.0';
+    const SDK_VERSION = '10.13.0';   // keep in step with FIREBASE_SDK_VERSION in sw.js
     const scripts = [
       `https://www.gstatic.com/firebasejs/${SDK_VERSION}/firebase-app-compat.js`,
       `https://www.gstatic.com/firebasejs/${SDK_VERSION}/firebase-auth-compat.js`,

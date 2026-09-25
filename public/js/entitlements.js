@@ -156,11 +156,24 @@ const Entitlements = (function () {
     if (_watchUid !== uid) {
       _watchUid = uid;
       if (_unsub) { try { _unsub(); } catch (e) {} _unsub = null; }
+      let lastKey = null;
       firebaseReadyPromise.then(function () {
         if (_watchUid !== uid) return; // switched again before the SDK was ready
-        _unsub = firebase.firestore().collection('users').doc(uid).onSnapshot(function (snap) {
+        // Metadata changes are included so the server's answer arrives even
+        // when it matches the offline copy the first snapshot came from.
+        _unsub = firebase.firestore().collection('users').doc(uid).onSnapshot({ includeMetadataChanges: true }, function (snap) {
+          const fromCache = !!(snap.metadata && snap.metadata.fromCache);
           const doc = snap.exists ? snap.data() : {};
           const access = computeAccess(doc, Date.now());
+          // The offline copy can be out of date (a payment made on another
+          // device), so it may grant access but never take it away or start a
+          // trial; that waits for the server.
+          if (fromCache && (!access.hasAccess || access.state === 'pending')) return;
+          // Metadata-only changes repeat the same answer; pass on real changes only.
+          let key = null;
+          try { key = JSON.stringify([access, doc]); } catch (e) { /* always pass on */ }
+          if (key !== null && key === lastKey) return;
+          lastKey = key;
           writeCache(access, uid);
           _emit(access, doc);
           // Brand-new account with nothing stamped yet → start its free trial.

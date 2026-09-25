@@ -2,7 +2,8 @@
   "_comment": [
     "Bubblewrap configuration for packaging this site as a Trusted Web Activity.",
     "Replace every HOST_DOMAIN placeholder with the domain the site is actually",
-    "served from, then run:  npx @bubblewrap/cli init --manifest ./twa-manifest.json",
+    "served from, copy this file into an empty folder, and run there:",
+    "  bubblewrap update --skipVersionUpgrade   then   bubblewrap build",
     "See PLAY_STORE_LAUNCH.md for the full walkthrough.",
     "packageId and signingKey can never change once published — get them right first."
   ],
@@ -24,8 +25,8 @@
   "iconUrl": "https://HOST_DOMAIN/assets/icons/icon-512.png",
   "maskableIconUrl": "https://HOST_DOMAIN/assets/icons/icon-maskable-512.png",
   "splashScreenFadeOutDuration": 300,
-  "appVersionName": "1.12.0",
-  "appVersionCode": 19,
+  "appVersionName": "1.13.0",
+  "appVersionCode": 20,
   "shortcuts": [
     {
       "name": "Projects",
@@ -62,7 +63,7 @@
   "isMetaQuest": false,
   "fullScopeUrl": "https://HOST_DOMAIN/",
   "minSdkVersion": 21,
-  "appVersion": "1.12.0",
+  "appVersion": "1.13.0",
   "signingKey": {
     "path": "./android.keystore",
     "alias": "android"

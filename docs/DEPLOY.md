@@ -100,8 +100,15 @@ cp functions/.env.example functions/.env
 | `DRIVE_ROOT_FOLDER_ID` | The shared drive for project files (step 5). Empty switches files off. |
 | `DRIVE_PROJECT_QUOTA_MB` | File space per project, default `2048`. |
 | `DRIVE_USER_QUOTA_MB` | File space one person can add across all projects, default `10240`. |
+| `DRIVE_TRIAL_QUOTA_MB` | The same while a person is only on the free trial, default `200`. |
+| `DRIVE_TOTAL_QUOTA_MB` | File space all projects together may use, default `102400` (100 GB). Keep it below the free storage in your Google Workspace. |
+| `PLAY_PACKAGE_NAME`, `PLAY_PRODUCT_IDS` | Only for the Android app. The defaults (`Duck.HSE.Portal`, `pro_monthly`) match the app as shipped. |
 
 `functions/.env` holds settings, not secrets, and git ignores it.
+
+The website sells by card through Stripe. The Android app (optional, later)
+sells through Google Play and has its own steps: `PLAY_STORE_LAUNCH.md` §2 to
+§3a, and `SECURITY.md` §6 step 10, which Play renewals need.
 
 ## 5. Google Drive for project files (once, optional)
 

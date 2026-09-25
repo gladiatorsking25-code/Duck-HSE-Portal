@@ -125,7 +125,10 @@ try {
   assert.match(feed, /bob@example\.com joined as editor/);
   step('Activity feed shows the join and item changes');
 
-  // 9b. Files and photos, kept in the project's Drive folder.
+  // 9b. Files and photos, kept in the project's Drive folder. Uploading needs
+  // a verified email address.
+  await verifyEmail('alice@example.com');
+  await alice.evaluate(() => firebase.auth().currentUser.getIdToken(true));
   const pdfBytes = Buffer.concat([Buffer.from('%PDF-1.4\n% Duck HSE test\n'), Buffer.alloc(4096, 65), Buffer.from('\n%%EOF\n')]);
   await alice.click('#addFileBtn');
   await alice.setInputFiles('#fFiles', { name: 'Lift plan rev B.pdf', mimeType: 'application/pdf', buffer: pdfBytes });

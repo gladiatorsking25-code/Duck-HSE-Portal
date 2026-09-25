@@ -11,6 +11,62 @@ No install; runs in any modern browser on phone, tablet or desktop.
 
 ## Changelog
 
+- **Pre-launch fixes (v1.13.0)**. A final check of the whole portal before
+  selling found these, and all are fixed:
+  - **Payments.** Card checkout shows on phone and Chromebook browsers again (the
+    page took any Chrome on Android for the Android app). Inside the Android app
+    only Google Play is offered, never card or invoice (`?src=twa` start URL).
+    A Google Play purchase belongs to one account: another account cannot
+    unlock itself with it, and an admin suspension is kept (`functions/play.js`).
+    The app checks Play once per launch, so renewals unlock without a tap, and
+    purchases are acknowledged by the server. Card checkout asks Stripe first,
+    so nobody pays twice while a webhook is late; a test-mode customer left over
+    after going live is replaced; suspended accounts cannot check out and see a
+    suspended message. Terms and Privacy links sit next to the plans.
+  - **Android app.** Play Billing is switched on in `twa-manifest.json`,
+    `public/.well-known/assetlinks.json` is added (put in the fingerprint), and
+    `PLAY_STORE_LAUNCH.md` describes Hostinger and a Bubblewrap flow that works.
+    Play notifications (RTDN) are now a required step (`SECURITY.md` §6).
+  - **Records on every device.** Inspection checklists now come back from the
+    account like permits and assessments. Deletes reach other devices, saves
+    made offline or cut off by leaving the page are sent later, and pages
+    refresh when records arrive. Import uploads what it restores.
+  - **Shared devices.** Each account sees only its own records. Another person's
+    records are parked on the device and come back when they sign in again;
+    nothing is deleted. Erasing the device removes every account's records.
+  - **After a trial or subscription ends** people can still open their projects
+    and Settings read-only: view, download files and backups, export their
+    records. Only adding and changing needs a subscription.
+  - **Safer files.** Audit pack files are typed from their file name, never from
+    the pack, and only images, PDFs, audio and video open in a tab; everything
+    else downloads. PDF, video and audio previews now work on the live site.
+    Assessment history shows names as text.
+  - **Tighter rules.** A person can only change their display name and consent
+    record on their profile; personal records need access to change; activity
+    entries carry the signed-in email. File uploads need a verified email, trial
+    accounts get 200 MB (`DRIVE_TRIAL_QUOTA_MB`), and all projects together are
+    capped (`DRIVE_TOTAL_QUOTA_MB`).
+  - **Account deletion.** Admins delete an account from the Admin page
+    (`adminDeleteAccount`); the steps are in `DEPLOY.md`. Sign-up asks to accept
+    the Terms and Privacy Notice, and every acceptance is recorded with the
+    account. The Privacy Notice and deletion page now describe the Drive upload
+    of audit packs and how long backups really last. Everyone accepts the updated
+    notice once (consent version 2026-09-25).
+  - **Hosting.** Cloud Functions run on Node.js 22: **redeploy the functions
+    before 30 October 2026**, when Node.js 20 deploys stop
+    (`cd functions && npm install && firebase deploy --only functions`).
+    `www.` visitors go to the address without it, so sign-in and payments stay
+    on one address (`APP_ORIGIN` must be that address). Scripts revalidate after
+    each upload, the app starts offline with the Firebase scripts it cached, and
+    email fields no longer zoom on iPhones.
+  - **Smaller things.** Permit numbers carry a short issuer code
+    (`HW-2026-K7Q2-0007`) so two issuers never share a number. Lift assessment
+    links open the assessment. Settings import checks the file, refuses project
+    backups and asks Merge, Replace or Cancel. The project CSV export has every
+    item. The crane card no longer tells customers to edit code.
+  - **Tests.** New unit tests for Play purchases, sync, read-only access,
+    consent, hosting and account deletion; more rules, Drive and browser tests.
+
 - **Go-live guide and deploy tools (no change to the app itself)**
   - `docs/DEPLOY.md`: one guide, in order, from an empty Hostinger site to taking
     payments: tools, Firebase console settings, Stripe, function settings, Google

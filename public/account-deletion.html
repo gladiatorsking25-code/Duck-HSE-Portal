@@ -66,6 +66,7 @@
         <p style="margin-top:0; color:var(--ink-soft); font-size:13.5px;">
           This permanently deletes every checklist, permit, assessment, signature, note, photo,
           saved preference, and the offline copy of the app from this device, then signs you out.
+          It also removes records that other people who signed in on this device left here.
           It cannot be undone. <strong>Export a backup first</strong> from Settings &amp; backup if
           you need the records. Copies kept in your account are not touched; to delete those, use
           option 3.
@@ -195,12 +196,33 @@ if (typeof FIREBASE_READY === 'undefined' || !FIREBASE_READY) {
 async function eraseDevice() {
   try { localStorage.clear(); } catch (e) { console.error(e); }
   try { sessionStorage.clear(); } catch (e) { console.error(e); }
-  // Certificate photos are stored in IndexedDB, which localStorage.clear() does
-  // not touch — delete that database so no personal document images remain.
-  try { indexedDB.deleteDatabase('cla_certificate_store_v1'); } catch (e) { console.error(e); }
-  // HSE audit checklists and their evidence files (certificates, IDs,
-  // incident reports) live in their own IndexedDB database.
-  try { indexedDB.deleteDatabase('cla_audit_store_v1'); } catch (e) { console.error(e); }
+  // The account's offline copy kept by Firestore: stop it before deleting.
+  try {
+    if (typeof firebase !== 'undefined' && firebase.apps.length) {
+      const fs = firebase.firestore();
+      await fs.terminate();
+      await fs.clearPersistence();
+    }
+  } catch (e) { console.error(e); }
+  // Certificate photos and HSE audit checklists with their evidence files
+  // (certificates, IDs, incident reports) live in IndexedDB, which
+  // localStorage.clear() does not touch. Each account that used this device
+  // has its own copy ('<name>:<uid>'), and records parked by other accounts
+  // are in the device stash, so every one of them goes.
+  const bases = ['cla_certificate_store_v1', 'cla_audit_store_v1', 'cla_device_stash_v1'];
+  let names = bases.slice();
+  try {
+    if (indexedDB.databases) {
+      const all = (await indexedDB.databases()).map((d) => d.name).filter(Boolean);
+      names = names.concat(all.filter((n) => bases.some((b) => n.startsWith(b + ':')) || n.startsWith('firestore/')));
+    }
+  } catch (e) { console.error(e); }
+  await Promise.all(Array.from(new Set(names)).map((n) => new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(n);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch (e) { console.error(e); resolve(); }
+  })));
 
   // Drop the offline cache and unregister the service worker too, so no copy
   // of the app's pages is left behind on the device.
@@ -232,7 +254,7 @@ $('wipeForm').addEventListener('submit', async (e) => {
     wipeMessage('danger', 'That password is not right, so nothing was erased.');
     return;
   }
-  if (!confirm('This permanently deletes ALL checklists, permits, assessments, signatures and photos stored on this device, and the app\'s offline copy. Export a backup first if you have not already. Continue?')) {
+  if (!confirm('This permanently deletes ALL checklists, permits, assessments, signatures and photos stored on this device, including those of anyone else who has signed in here, and the app\'s offline copy. Export a backup first if you have not already. Continue?')) {
     btn.disabled = false;
     return;
   }

@@ -28,8 +28,9 @@ const ProjectLink = (function () {
     Projects.ready().then(() => {
       firebase.auth().onAuthStateChanged((user) => {
         if (!user) return;
-        const unsub = Projects.watchMine(user.uid, (list) => {
-          unsub();
+        // Kept live: the first list can come from the offline copy, and the
+        // up-to-date one follows.
+        Projects.watchMine(user.uid, (list) => {
           const keep = select.value;
           select.innerHTML = '';
           select.appendChild(none);

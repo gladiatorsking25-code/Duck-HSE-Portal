@@ -144,7 +144,11 @@ function renderSubscriptionPanel() {
       } else {
         detail = (since ? `Since ${fmtD(since)} · ` : '') + (exp ? `Renews / expires ${fmtD(exp)}.` : 'Active.');
       }
-      if (provider === 'stripe') actions = '<button type="button" class="btn btn-sm" id="managePlanBtn">Manage plan</button>';
+      // Inside the Android app a card plan is managed on the website, never
+      // through a payment page opened in the app (Google Play's rules).
+      const inApp = typeof Billing !== 'undefined' && Billing.inTwa && Billing.inTwa();
+      if (provider === 'stripe' && inApp) detail += ' Manage your card plan from the website.';
+      else if (provider === 'stripe') actions = '<button type="button" class="btn btn-sm" id="managePlanBtn">Manage plan</button>';
       else if (provider === 'play') actions = '<a class="btn btn-sm" href="https://play.google.com/store/account/subscriptions" target="_blank" rel="noopener">Manage in Google Play</a>';
     } else if (st === 'locked' || st === 'expired') {
       title = 'Subscription needed';

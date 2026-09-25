@@ -61,8 +61,8 @@ decide access are written **exclusively by Cloud Functions** (Admin SDK):
 |---|---|---|
 | `role` | admin bootstrap / `adminSetRole` | `admin` = full access always |
 | `trialStartedAt` / `trialEndsAt` | `onUserCreate` | the free-trial window |
-| `subscriptionStatus` | `verifyPlayPurchase` / RTDN / `stripeWebhook` | `active`, `in_grace`, `expired`, … |
-| `subscriptionExpiryMillis` | `verifyPlayPurchase` / RTDN / `stripeWebhook` | when paid access ends |
+| `subscriptionStatus` | `verifyPlayPurchase` / RTDN / `stripeWebhook` / `stripeCreateCheckout` (repairs a missed webhook) / `adminSetSubscription` | `active`, `in_grace`, `expired`, `revoked`, … |
+| `subscriptionExpiryMillis` | `verifyPlayPurchase` / RTDN / `stripeWebhook` / `stripeCreateCheckout` (repairs a missed webhook) | when paid access ends |
 | `subscriptionProvider`, `stripeCustomerId`, `stripeSubscriptionId`, `cancelAtPeriodEnd` | `verifyPlayPurchase` / `stripeCreateCheckout` / `stripeWebhook` | which store the plan is with, and the Stripe references |
 | `adminGrantUntil` / `compForever` | `adminSetSubscription` | a manual owner grant |
 
