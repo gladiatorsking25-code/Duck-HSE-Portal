@@ -30,7 +30,7 @@
     <div class="topbar">
       <div>
         <h2>Privacy Notice</h2>
-        <div class="crumb">Last updated: 24 September 2026</div>
+        <div class="crumb">Last updated: 25 September 2026</div>
       </div>
       <a class="btn" href="index.html">Back to dashboard</a>
     </div>
@@ -53,10 +53,14 @@
         <li>Permit records such as gas-test readings, isolation points and lock numbers, and close-out notes;</li>
         <li>Names of inspectors, operators and supervisors, and the equipment identifiers (asset, plate and serial numbers) entered into monthly equipment checklists;</li>
         <li>Photographs of third-party certificates you attach to a checklist — inspection certificates, operator/rigger/banksman competency certificates and lifting-accessory certificates. These images can contain personal data (a named certificate holder, a photograph on a licence, an issuer's stamp). They are resized and stored on your own device in the browser's IndexedDB, alongside the certificate details (number, issuer, issue and expiry dates) held in the checklist record;</li>
+        <li>HSE audit checklists and the evidence files you attach to them, such as certificates,
+        training records, ID cards and incident reports. These are kept on your own device in the
+        browser's IndexedDB. If you upload an audit pack to your own Google Drive, see section 3c;</li>
         <li>Email addresses you type into the checklist forwarding screen. These are used only to address that one message and are handed straight to your own email app — they are not stored by the App, and there is no address book or sending history;</li>
         <li>Handwritten signatures captured on-screen for permit sign-off;</li>
         <li>Free-text notes you choose to enter;</li>
         <li>Your account email address. Your password is held by Google Firebase Authentication and is never visible to the operator;</li>
+        <li>A record of which version of the Terms of Use and this notice you accepted, and when;</li>
         <li>Project details you enter, the actions, inspections, incidents and other items tracked on a project, the project's activity log, and the email addresses of the people you invite to a project;</li>
         <li>Files and photos you add to a project (for example method statements, drawings, certificates and site photos), with any note, who added each one and when. These can contain personal data, such as names on a certificate or people in a photo. Site photos in JPEG, PNG or WebP format that are larger than 2 MB are usually made smaller on your device before they are sent, which removes any location data stored inside them. Other files and photos (for example HEIC photos, smaller photos, drawings and scanned certificates) are sent as they are, including any location data stored inside them;</li>
         <li>Backups of each project: a copy of its details, tracked items, file list and recent activity log.</li>
@@ -67,7 +71,8 @@
 
       <div class="section-title">2. Where this data is stored</div>
       <ul>
-        <li><strong>Your account</strong> (email address, free-trial and subscription status), the
+        <li><strong>Your account</strong> (email address, free-trial and subscription status, and which
+        version of the Terms of Use and this notice you accepted and when), the
         <strong>projects</strong> you create or join, and a <strong>copy of your checklists, permits and
         assessments</strong> are stored in Google Firebase (Authentication and Cloud Firestore), which the
         operator uses as a data processor. See section 3a for where it is hosted.</li>
@@ -77,7 +82,9 @@
         shared drive the operator controls (Google Workspace, used as a data processor). Only the App's
         server can reach them; members never get direct access to the Drive.</li>
         <li><strong>Checklist certificate photos and HSE audit evidence files</strong> stay in your device's
-        browser storage (IndexedDB) and are not uploaded, unless you add them to a project as files.</li>
+        browser storage (IndexedDB). The operator does not receive them, unless you add them to a project
+        as files. If you use <strong>Upload to Drive</strong> on an HSE audit, the audit pack is sent from
+        your device to your own Google Drive (see section 3c).</li>
         <li>Members of a project can see its details, tracked items, files and activity log, and the email
         addresses of the other members. The project's owner and managers can also download its backups.
         Nobody else can.</li>
@@ -99,7 +106,9 @@
       level of protection recognised by the UAE Data Office, or — failing that — where it is
       covered by an appropriate contractual safeguard or by your explicit consent after being
       informed of the risk. The safeguard relied on here is Google's Cloud Data Processing
-      Addendum, together with the consent recorded through the in-app acceptance screen.
+      Addendum, together with your explicit consent. You give it when you create your account,
+      before the account exists, and on the in-app acceptance screen, which asks again whenever
+      these terms change. Which version you accepted, and when, is recorded with your account.
       Using the App requires an account, so <strong>if you do not want your data leaving the UAE,
       do not create an account</strong>.</p>
       <p>Before commercial launch, confirm with a UAE-licensed lawyer which
@@ -124,11 +133,39 @@
         privacy policy governs the payment itself.</li>
       </ul>
 
+      <div class="section-title">3c. Uploading audit packs to your own Google Drive</div>
+      <p><strong>Upload to Drive</strong> on an HSE audit is optional, and it only works after Google
+      Drive has been set up in the audit page's Drive settings. When you use it:</p>
+      <ul>
+        <li>You sign in to Google in your browser, in Google's own sign-in window (Google Identity
+        Services). Google then gives the App a short-lived access token for your Drive. The App does
+        not see your Google password.</li>
+        <li>The App puts the audit pack together on your device and sends it straight from your device
+        to your own Google Drive, into the folder you choose. The operator's servers are not involved:
+        the operator never receives the pack or the access token.</li>
+        <li>The access token is held only in the page's memory. It is never saved on the device, it is
+        discarded when you close the page, and it expires within about an hour.</li>
+        <li>By default the App asks only for the <strong>drive.file</strong> permission, which lets it see
+        and change only the files and folders it created, or that you pick in Google's folder picker. In
+        Drive settings you can choose <strong>Full Drive</strong> access instead, so that the App can find
+        your existing project folders. That permission lets the App see and change any file in your
+        Drive while you are signed in; the App only uses it to find folders and upload packs.</li>
+        <li>Your Drive settings (the Google client ID, API key and chosen folders) are saved on your device
+        only.</li>
+        <li>An uploaded pack is stored in your Google Drive under your Google account, and Google's privacy
+        policy (<a href="https://policies.google.com/privacy" target="_blank" rel="noopener">policies.google.com/privacy</a>)
+        applies to it. It stays under your control: deleting your data or your account in this App does
+        not remove it, so delete it in Google Drive if you no longer need it. You can take away the App's
+        access to your Drive at any time in your Google Account settings, where Google lists the
+        third-party apps that can reach your account.</li>
+      </ul>
+
       <div class="section-title">4. Legal basis for processing</div>
       <p>Where the App processes personal data (as described above), the
-      basis relied on is your consent, given when you accept these terms via the
-      in-app consent screen, and/or the performance of the HSE planning, inspection, audit and
-      record-keeping functions you are using the App for.</p>
+      basis relied on is your consent, given when you create your account and, whenever these terms
+      change, on the in-app acceptance screen, and/or the performance of the HSE planning, inspection,
+      audit and record-keeping functions you are using the App for. The version you accepted and the
+      time are recorded with your account, and also on the device where you accepted.</p>
 
       <div class="section-title">5. Your rights under PDPL</div>
       <p>Subject to the exceptions PDPL provides, you have the right to: request access
@@ -169,8 +206,18 @@
       kept for a set period). Retained records are kept only for that purpose and deleted at the
       end of the statutory period.</p>
       <p>A deleted project file goes to the Google Drive trash, where it is permanently deleted after
-      30 days. Each project keeps its 30 most recent nightly backups, 20 backups made by hand and 10
-      backups made just before a restore; older backups are deleted automatically.</p>
+      30 days.</p>
+      <p>Project backups are kept by number, not by date. Each project keeps its last 30 nightly
+      backups, up to 20 backups made by hand and up to 10 backups made just before a restore. Older
+      ones go to the Google Drive trash and are permanently deleted 30 days later. A nightly backup is
+      only taken on a day the project changed, so in a project that rarely changes the oldest backup
+      kept can be many months old. Backups hold the project's details, tracked items, file list and
+      recent activity log, which include the email addresses of its members and of the people who made
+      changes. On request, for example after an account deletion, the operator deletes a project's
+      backups sooner.</p>
+      <p>The record of your acceptance of these terms is kept with your account and deleted with it.
+      Audit packs you upload to your own Google Drive stay there until you delete them (see
+      section 3c).</p>
 
       <div class="section-title">11. How to delete your data</div>
       <p>Every deletion route — erasing all data on the device, uninstalling, and requesting
