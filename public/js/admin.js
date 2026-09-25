@@ -99,9 +99,12 @@
 
   // Deleting an account (when its owner asks, see docs/DEPLOY.md): the server
   // first says what would happen, then the admin types the address to confirm.
+  // Their own projects (nobody else belongs to them) are deleted, unless
+  // "Keep their own projects archived" is ticked.
   async function deleteAccount(uid) {
+    const keepSoloProjects = $('adminKeepSolo').checked;
     let plan;
-    try { plan = await call('adminDeleteAccount', { targetUid: uid, dryRun: true }); } catch (e) { return; }
+    try { plan = await call('adminDeleteAccount', { targetUid: uid, dryRun: true, keepSoloProjects }); } catch (e) { return; }
     const byId = plan.email === plan.uid;
     const lines = [
       `Delete the account ${plan.email}? This cannot be undone.`,
@@ -109,7 +112,11 @@
       'Their sign-in, profile and saved records are deleted and they leave every project. Project history keeps what they did, shown as "deleted user".'
     ];
     if (plan.leave.length) lines.push('', `They leave: ${plan.leave.join(', ')}.`);
-    if (plan.archive.length) lines.push('', `Archived, because nobody else belongs to them: ${plan.archive.join(', ')}.`);
+    if (plan.solo.length) {
+      lines.push('', plan.keepSoloProjects
+        ? `Archived and kept, because nobody else belongs to them: ${plan.solo.join(', ')}.`
+        : `DELETED with their items, files and backups, because nobody else belongs to them: ${plan.solo.join(', ')}. To keep them archived instead, cancel and tick "Keep their own projects archived".`);
+    }
     const sub = plan.subscription;
     if (sub && sub.provider === 'stripe') {
       lines.push('', sub.renews
@@ -126,9 +133,10 @@
       return;
     }
     try {
-      const res = await call('adminDeleteAccount', { targetUid: uid, confirm: typed.trim() });
+      const res = await call('adminDeleteAccount', { targetUid: uid, confirm: typed.trim(), keepSoloProjects });
       await load();
       const parts = [`The account ${res.email} was deleted.`];
+      if (res.projectsDeleted) parts.push(`${res.projectsDeleted} project${res.projectsDeleted === 1 ? ' was' : 's were'} deleted.`);
       if (res.archived) parts.push(`${res.archived} project${res.archived === 1 ? ' was' : 's were'} archived.`);
       if (res.subscription && res.subscription.renews) parts.push('Remember to cancel their subscription.');
       note('ok', parts.join(' '));

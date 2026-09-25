@@ -16,7 +16,7 @@ const NOW = Date.UTC(2026, 8, 24, 10);
 
 // ---- Decisions ---------------------------------------------------------------
 
-test('projects are sorted into leave, archive (theirs alone) and blocked (others still use it)', () => {
+test('projects are sorted into leave, solo (theirs alone) and blocked (others still use it)', () => {
   const plan = A.planAccountDeletion('gone', [
     { id: 'a', data: { name: 'Theirs, shared', members: { gone: 'owner', ed: 'editor' } } },
     { id: 'b', data: { name: 'Theirs alone', members: { gone: 'owner' }, pendingInvites: [{ email: 'x@example.com', role: 'viewer' }] } },
@@ -25,7 +25,7 @@ test('projects are sorted into leave, archive (theirs alone) and blocked (others
   ]);
   assert.deepEqual(plan, {
     blocked: [{ id: 'a', name: 'Theirs, shared' }],
-    archive: [{ id: 'b', name: 'Theirs alone' }],
+    solo: [{ id: 'b', name: 'Theirs alone' }],
     leave: [{ id: 'c', name: 'Someone else\'s' }]
   });
   assert.match(A.blockedMessage('gone@example.com', plan.blocked),
@@ -61,6 +61,18 @@ test('an address is replaced wherever it appears, whatever its case', () => {
   assert.equal(A.scrub('gone+site@example.com joined; gone+site@example.com left', emails), 'deleted user joined; deleted user left');
   assert.equal(A.scrub('gonexsite@example.com stays', emails), 'gonexsite@example.com stays');
   assert.equal(A.scrub(undefined, emails), '');
+  assert.equal(A.scrub('Removed gone+site@example.com.', emails), 'Removed deleted user.');
+  assert.equal(A.scrub('(gone+site@example.com)', emails), '(deleted user)');
+});
+
+test('only the whole address is replaced, never part of someone else\'s', () => {
+  assert.equal(A.scrub('Invited sales.info@acme.com as editor', ['info@acme.com']), 'Invited sales.info@acme.com as editor');
+  assert.equal(A.scrub('Invited info@acme.com as editor', ['info@acme.com']), 'Invited deleted user as editor');
+  assert.equal(A.scrub('Removed wali@acme.ae', ['ali@acme.ae']), 'Removed wali@acme.ae');
+  assert.equal(A.scrub('Removed ali@acme.ae', ['ali@acme.ae']), 'Removed deleted user');
+  assert.equal(A.scrub('Invited ali@acme.ae.uk as viewer', ['ali@acme.ae']), 'Invited ali@acme.ae.uk as viewer');
+  assert.equal(A.scrub('Removed ali@acme.ae-group.com', ['ali@acme.ae']), 'Removed ali@acme.ae-group.com');
+  assert.equal(A.scrub('ali@acme.ae left the project', ['ali@acme.ae']), 'deleted user left the project');
 });
 
 test('a running paid subscription is reported so the admin can cancel it', () => {
@@ -102,13 +114,35 @@ function fakeAuth(records) {
     async deleteUser(uid) { calls.push(['deleteUser', uid]); if (!records[uid]) throw notFound(); delete records[uid]; }
   };
 }
+// A stand-in for drive.js that records what was trashed; fail.trash makes it
+// throw. fail.recursiveDelete makes the next recursiveDelete of that path fail.
 function setup(records) {
   const auth = fakeAuth(records || {
     gone: { uid: 'gone', email: 'Gone@Example.com' },
     own: { uid: 'own', email: 'own@example.com' },
     adm: { uid: 'adm', email: 'adm@example.com' }
   });
-  return { auth, ad: A.makeAccountDelete({ db, FieldValue, auth, now: () => NOW }) };
+  const fail = {};
+  const trashed = [];
+  const drive = {
+    async trash(id) {
+      if (fail.trash) throw new Error('Drive said no');
+      trashed.push(id);
+    }
+  };
+  const dbx = new Proxy(db, {
+    get(t, k) {
+      if (k === 'recursiveDelete') {
+        return async (ref) => {
+          if (fail.recursiveDelete === ref.path) { delete fail.recursiveDelete; throw new Error('write failed'); }
+          return t.recursiveDelete(ref);
+        };
+      }
+      const v = t[k];
+      return typeof v === 'function' ? v.bind(t) : v;
+    }
+  });
+  return { auth, fail, trashed, ad: A.makeAccountDelete({ db: dbx, FieldValue, auth, drive, now: () => NOW }) };
 }
 const get = async (path) => (await db.doc(path).get()).data();
 const all = async (path) => (await db.collection(path).get()).docs.map((d) => Object.assign({ id: d.id }, d.data()));
@@ -145,13 +179,26 @@ async function seed() {
   await w('projects/p1/backups/b1', { name: 'b.json', kind: 'manual', createdBy: 'gone', createdByEmail: 'gone@example.com' });
   await w('projects/p1/items/i1', { title: 'Barrier', createdBy: 'gone' });
 
-  // p2: theirs alone, with an invite still waiting for a friend.
+  // p2: theirs alone, with an invite still waiting for a friend, and files:
+  // one of theirs, one from someone who has left, and one of that person's
+  // deleted last week (its space is not given back yet).
   await w('projects/p2', {
     name: 'My own survey', status: 'active', ownerUid: 'gone',
     members: { gone: 'owner' }, memberUids: ['gone'], memberEmails: { gone: 'gone@example.com' },
     pendingInvites: [{ email: 'friend@example.com', role: 'viewer' }]
   });
   await w('projectInvites/friend@example.com', { invites: { p2: 'viewer', p9: 'editor' } });
+  await w('projects/p2/items/i1', { title: 'Incident at gate 3', createdBy: 'gone' });
+  await w('projects/p2/activity/e1', { uid: 'gone', email: 'gone@example.com', action: 'item.create', itemId: 'i1', summary: 'Added: Incident at gate 3' });
+  await w('projects/p2/files/f1', { name: 'photo.jpg', size: 1000, uploadedBy: 'gone', uploadedByEmail: 'gone@example.com' });
+  await w('projects/p2/files/f2', { name: 'cert.pdf', size: 2000, uploadedBy: 'old', uploadedByEmail: 'old@example.com' });
+  await w('projects/p2/backups/b1', { name: 'b.json', kind: 'auto', driveFileId: 'bk1', createdBy: '', createdByEmail: '' });
+  await w('driveFolders/p2', { folderId: 'fold_p2', filesFolderId: 'files_p2', backupsFolderId: 'backups_p2', usedBytes: 3500, fileCount: 3 });
+  await w('driveTrash/t1', { pid: 'p2', uid: 'old', size: 500, driveFileId: 'x1', releaseAt: NOW + 20 * DAY });
+  await w('driveTrash/t2', { pid: 'p1', uid: 'own', size: 700, driveFileId: 'x2', releaseAt: NOW + 20 * DAY });
+  await w('driveFolders/p1', { folderId: 'fold_p1', usedBytes: 700, fileCount: 1 });
+  await w('driveUsers/old', { usedBytes: 2600, fileCount: 3 });
+  await w('driveTotals/all', { usedBytes: 20000, fileCount: 12 });
 
   // p3: they were invited but never joined.
   await w('projects/p3', {
@@ -165,29 +212,42 @@ async function seed() {
   await w('projects/p4', { name: 'Old job', status: 'closed', ownerUid: 'own', members: { own: 'owner' }, memberUids: ['own'], memberEmails: { own: 'own@example.com' } });
   await w('projects/p4/activity/e1', { uid: 'gone', email: 'gone@example.com', action: 'project.update', itemId: '', summary: 'gone@example.com left the project' });
   await w('projects/p4/activity/e2', { uid: 'own', email: 'own@example.com', action: 'project.update', itemId: '', summary: 'Removed GONE@example.com' });
+  await w('projects/p4/activity/e3', { uid: 'own', email: 'own@example.com', action: 'project.update', itemId: '', summary: 'Invited sales.gone@example.com as viewer' });
+
+  // p6: archived before they signed in, so sign-in skipped its invite and
+  // the index no longer points to it.
+  await w('projects/p6', {
+    name: 'Shelved', status: 'archived', ownerUid: 'own',
+    members: { own: 'owner' }, memberUids: ['own'], memberEmails: { own: 'own@example.com' },
+    pendingInvites: [{ email: 'gone@example.com', role: 'editor' }, { email: 'friend@example.com', role: 'viewer' }]
+  });
 }
 
 test('deleting an account removes the person everywhere and keeps the teams\' history without their address', { skip }, async () => {
   await seed();
-  const { auth, ad } = setup();
+  const { auth, trashed, ad } = setup();
 
   const preview = await ad.deleteAccount({ adminUid: 'adm', targetUid: 'gone', dryRun: true });
   assert.deepEqual(preview, {
-    dryRun: true, uid: 'gone', email: 'gone@example.com', archive: ['My own survey'], leave: ['Tower crane works'],
+    dryRun: true, uid: 'gone', email: 'gone@example.com', solo: ['My own survey'], keepSoloProjects: false, leave: ['Tower crane works'],
     subscription: { provider: 'stripe', renews: true, stripeCustomerId: 'cus_123' }
   });
   assert.deepEqual(auth.calls, [], 'a preview changes nothing');
+  assert.deepEqual(trashed, []);
   assert.ok(await get('users/gone'));
+  assert.ok(await get('projects/p2'));
+  assert.equal(await get('deletedAccounts/gone'), undefined);
 
   const res = await ad.deleteAccount({ adminUid: 'adm', targetUid: 'gone', confirm: ' GONE@example.com ' });
   assert.equal(res.deleted, true);
-  assert.deepEqual([res.archived, res.left, res.invitesCancelled], [1, 1, 1]);
+  assert.deepEqual([res.projectsDeleted, res.archived, res.left, res.invitesCancelled], [1, 0, 1, 2]);
   assert.deepEqual(auth.calls, [
     ['updateUser', 'gone', { disabled: true }], ['revokeRefreshTokens', 'gone'], ['deleteUser', 'gone']
   ]);
 
-  // Their own data is gone; other people's is not.
+  // Their own data is gone; other people's is not. Only a dated marker stays.
   assert.equal(await get('users/gone'), undefined);
+  assert.deepEqual(Object.keys(await get('deletedAccounts/gone')), ['deletedAt']);
   for (const sub of ['assessments', 'permits', 'checklists']) assert.deepEqual(await all(`users/gone/${sub}`), []);
   assert.equal((await all('users/own/permits')).length, 1);
   assert.equal(await get('driveUsers/gone'), undefined);
@@ -213,25 +273,39 @@ test('deleting an account removes the person everywhere and keeps the teams\' hi
   assert.equal((await get('projects/p1/backups/b1')).createdByEmail, 'deleted user');
   assert.equal((await get('projects/p1/items/i1')).title, 'Barrier');
 
-  // p2: archived with nobody in it; the friend's invite is cancelled.
-  const p2 = await get('projects/p2');
-  assert.equal(p2.status, 'archived');
-  assert.deepEqual([p2.members, p2.memberUids, p2.memberEmails, p2.pendingInvites], [{}, [], {}, []]);
+  // p2: deleted with everything in it, its Drive folder trashed, and its
+  // space given back: all of it for the portal (the deleted file's too, as
+  // its driveTrash entry goes), and to the person who has left for their
+  // file and their deleted one. The friend's invite is cancelled.
+  assert.equal(await get('projects/p2'), undefined);
+  for (const sub of ['items', 'activity', 'files', 'backups']) assert.deepEqual(await all(`projects/p2/${sub}`), []);
+  assert.deepEqual(trashed, ['fold_p2']);
+  assert.equal(await get('driveFolders/p2'), undefined);
+  assert.deepEqual((await all('driveTrash')).map((t) => t.id), ['t2']);
+  assert.deepEqual(await get('driveTotals/all'), { usedBytes: 16500, fileCount: 9 });
+  assert.deepEqual(await get('driveUsers/old'), { usedBytes: 100, fileCount: 1 });
+  assert.deepEqual(await get('driveUsers/own'), { usedBytes: 7000, fileCount: 2 });
+  assert.deepEqual(await get('driveFolders/p1'), { folderId: 'fold_p1', usedBytes: 700, fileCount: 1 });
   assert.deepEqual((await get('projectInvites/friend@example.com')).invites, { p9: 'editor' });
-  assert.ok((await all('projects/p2/activity')).some((a) => /owner deleted their account/.test(a.summary)));
 
   // p3: their invite is cancelled, the friend's kept.
   assert.deepEqual((await get('projects/p3')).pendingInvites, [{ email: 'friend@example.com', role: 'editor' }]);
   assert.equal(await get('projectInvites/gone@example.com'), undefined);
 
-  // p4: a project they had already left.
+  // p4: a project they had already left. Someone else's address that ends
+  // with theirs is left alone.
   const old = Object.fromEntries((await all('projects/p4/activity')).map((a) => [a.id, a]));
   assert.deepEqual([old.e1.email, old.e1.summary], ['deleted user', 'deleted user left the project']);
   assert.equal(old.e2.summary, 'Removed deleted user');
+  assert.equal(old.e3.summary, 'Invited sales.gone@example.com as viewer');
+
+  // p6: the invite the index had lost track of is cancelled too.
+  assert.deepEqual((await get('projects/p6')).pendingInvites, [{ email: 'friend@example.com', role: 'viewer' }]);
 
   const log = await all('adminLog');
   assert.equal(log.length, 1);
   assert.equal(log[0].action, 'deleteAccount');
+  assert.equal(log[0].projectsDeleted, 1);
   assert.equal(log[0].targetUid, 'gone');
   assert.equal(log[0].byUid, 'adm');
   assert.ok(!JSON.stringify(log[0]).includes('gone@example.com'), 'the log keeps no address');
@@ -293,4 +367,89 @@ test('if the sign-in cannot be deleted, the account stays listed and a second ru
   assert.equal(await get('users/gone'), undefined);
   assert.deepEqual(await all('users/gone/permits'), []);
   assert.equal((await all('adminLog')).length, 1);
+});
+
+test('with keepSoloProjects, a project only they belong to is archived and kept, files and all', { skip }, async () => {
+  await seed();
+  const { trashed, ad } = setup();
+  const preview = await ad.deleteAccount({ adminUid: 'adm', targetUid: 'gone', dryRun: true, keepSoloProjects: true });
+  assert.deepEqual([preview.solo, preview.keepSoloProjects], [['My own survey'], true]);
+  const res = await ad.deleteAccount({ adminUid: 'adm', targetUid: 'gone', confirm: 'gone@example.com', keepSoloProjects: true });
+  assert.deepEqual([res.projectsDeleted, res.archived, res.left], [0, 1, 1]);
+  const p2 = await get('projects/p2');
+  assert.equal(p2.status, 'archived');
+  assert.deepEqual([p2.members, p2.memberUids, p2.memberEmails, p2.pendingInvites], [{}, [], {}, []]);
+  assert.deepEqual((await get('projectInvites/friend@example.com')).invites, { p9: 'editor' });
+  assert.ok((await all('projects/p2/activity')).some((a) => /owner deleted their account/.test(a.summary)));
+  assert.equal((await all('projects/p2/items')).length, 1);
+  assert.equal((await get('projects/p2/files/f1')).uploadedByEmail, 'deleted user');
+  assert.deepEqual(trashed, []);
+  assert.equal((await get('driveFolders/p2')).usedBytes, 3500);
+  assert.deepEqual(await get('driveTotals/all'), { usedBytes: 20000, fileCount: 12 });
+  assert.equal((await all('driveTrash')).length, 2);
+});
+
+test('a run that stops while deleting their own project can be run again, and no space is given back twice', { skip }, async () => {
+  await seed();
+  const { fail, trashed, ad } = setup();
+  const confirm = { adminUid: 'adm', targetUid: 'gone', confirm: 'gone@example.com' };
+
+  // Drive refuses: nothing of the project has changed yet.
+  fail.trash = true;
+  await assert.rejects(ad.deleteAccount(confirm), code('unavailable', /could not delete the folder of "My own survey"\. Click Delete account again/));
+  assert.ok(await get('projects/p2'));
+  assert.equal((await get('driveFolders/p2')).usedBytes, 3500);
+  assert.ok(await get('deletedAccounts/gone'), 'the open app is already kept from writing');
+  delete fail.trash;
+
+  // The space is given back, then the project cannot be deleted.
+  fail.recursiveDelete = 'projects/p2';
+  await assert.rejects(ad.deleteAccount(confirm));
+  assert.deepEqual((await get('projects/p2')).memberUids, ['gone'], 'still found by the next run');
+  assert.equal(await get('driveFolders/p2'), undefined);
+  assert.deepEqual(await get('driveTotals/all'), { usedBytes: 16500, fileCount: 9 });
+
+  const res = await ad.deleteAccount(confirm);
+  assert.equal(res.projectsDeleted, 1);
+  assert.equal(await get('projects/p2'), undefined);
+  assert.deepEqual(await all('projects/p2/files'), []);
+  assert.deepEqual(trashed, ['fold_p2']);
+  assert.deepEqual(await get('driveTotals/all'), { usedBytes: 16500, fileCount: 9 });
+  assert.deepEqual(await get('driveUsers/old'), { usedBytes: 100, fileCount: 1 });
+  assert.equal(await get('users/gone'), undefined);
+});
+
+// ---- Invites and team changes (callables in index.js) ------------------------
+// index.js starts its own default app; it is pointed at this file's project,
+// which the emulator run shares with other test files.
+let callables;
+function fns() {
+  if (!callables) {
+    process.env.GCLOUD_PROJECT = PROJECT_ID;
+    process.env.FIREBASE_CONFIG = JSON.stringify({ projectId: PROJECT_ID });
+    callables = require('./index.js');
+  }
+  return callables;
+}
+const as = (uid, email) => ({ auth: { uid, token: { email, email_verified: true } } });
+
+test('signing in joins the invited projects and keeps only the invites to archived ones in the index', { skip }, async () => {
+  const w = (path, data) => db.doc(path).set(data);
+  const bob = { email: 'bob@example.com', role: 'editor' };
+  const team = { ownerUid: 'own', members: { own: 'owner' }, memberUids: ['own'], memberEmails: { own: 'own@example.com' } };
+  await w('projects/pA', Object.assign({ name: 'Open', status: 'active', pendingInvites: [bob] }, team));
+  await w('projects/pArch', Object.assign({ name: 'Shelved', status: 'archived', pendingInvites: [bob] }, team));
+  await w('projects/pCancelled', Object.assign({ name: 'Cancelled', status: 'active', pendingInvites: [] }, team));
+  await w('projectInvites/bob@example.com', { invites: { pA: 'editor', pArch: 'editor', pCancelled: 'editor', pGone: 'viewer' } });
+
+  const first = await fns().projectAcceptInvites.run({}, as('bob', 'Bob@Example.com'));
+  assert.deepEqual(first, { joined: ['pA'], needsVerification: false });
+  assert.equal((await get('projects/pA')).members.bob, 'editor');
+  assert.deepEqual((await get('projectInvites/bob@example.com')).invites, { pArch: 'editor' });
+
+  // Reopened: the next sign-in joins it, and the index is gone.
+  await db.doc('projects/pArch').update({ status: 'active' });
+  const second = await fns().projectAcceptInvites.run({}, as('bob', 'bob@example.com'));
+  assert.deepEqual(second.joined, ['pArch']);
+  assert.equal(await get('projectInvites/bob@example.com'), undefined);
 });

@@ -266,9 +266,12 @@ async function handleEvent({ stripe, db, event, env, serverTimestamp }) {
   if (!uid && event.type === 'checkout.session.completed') uid = event.data.object.client_reference_id || null;
   if (!uid) return 'unknown-user';
 
+  // The users doc exists before any checkout (onUserCreate, createCheckout).
+  // None means the account was deleted: never write it back.
   const ref = db.collection('users').doc(uid);
-  const current = (await ref.get()).data() || {};
-  const patch = entitlementPatch(sub, config(env).prices, current);
+  const snap = await ref.get();
+  if (!snap.exists) return 'unknown-user';
+  const patch = entitlementPatch(sub, config(env).prices, snap.data());
   if (!patch) return 'skipped-other-live-subscription';
   await ref.set(Object.assign(patch, { subscriptionUpdatedAt: serverTimestamp() }), { merge: true });
   return `applied:${patch.subscriptionStatus}`;

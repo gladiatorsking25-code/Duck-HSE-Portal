@@ -264,17 +264,20 @@ exports.adminListUsers = functions.https.onCall(async (data, context) => {
 });
 
 // Delete an account when its owner asks: sign-in, profile, saved records,
-// project memberships and invites; their address is replaced by "deleted
-// user" in project history (see account-delete.js, docs/DEPLOY.md).
+// project memberships and invites, and the projects only they belong to;
+// their address is replaced by "deleted user" in project history (see
+// account-delete.js, docs/DEPLOY.md).
 // data: { targetUid, dryRun } to see what would happen, then
 //       { targetUid, confirm: <the account's email address> } to do it.
+//       keepSoloProjects: true archives their own projects instead.
 const { makeAccountDelete } = require('./account-delete');
 exports.adminDeleteAccount = functions.runWith({ timeoutSeconds: 540, memory: '512MB' }).https.onCall(async (data, context) => {
   try {
     const adminUid = await assertAdmin(context);
     const d = data || {};
-    return await makeAccountDelete({ db, FieldValue, auth: admin.auth() }).deleteAccount({
-      adminUid, targetUid: d.targetUid, confirm: d.confirm, dryRun: d.dryRun === true
+    return await makeAccountDelete({ db, FieldValue, auth: admin.auth(), drive: drive() }).deleteAccount({
+      adminUid, targetUid: d.targetUid, confirm: d.confirm, dryRun: d.dryRun === true,
+      keepSoloProjects: d.keepSoloProjects === true
     });
   } catch (err) { throw asHttpsError(err); }
 });
@@ -396,16 +399,20 @@ exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
     const inviteSnap = await inviteRef.get();
     const invites = (inviteSnap.exists && inviteSnap.data().invites) || {};
     const joined = [];
+    // Index entries that are done with: joined, cancelled, or the project is
+    // gone. An invite to an archived project stays, for when it reopens.
+    const settled = [];
     for (const projectId of Object.keys(invites)) {
       const ref = db.collection('projects').doc(projectId);
-      await db.runTransaction(async (tx) => {
+      const outcome = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
-        if (!snap.exists) return;
+        if (!snap.exists) return 'gone';
         const p = snap.data();
         // The project's own pending list is the source of truth: an invite
         // that was cancelled there is ignored.
         const invite = (p.pendingInvites || []).find((i) => i.email === email);
-        if (!invite || p.status === 'archived') return;
+        if (!invite) return 'cancelled';
+        if (p.status === 'archived') return 'waiting';
         const members = Object.assign({}, p.members);
         const memberEmails = Object.assign({}, p.memberEmails);
         if (!members[uid]) members[uid] = invite.role;
@@ -416,10 +423,22 @@ exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
           updatedAt: FieldValue.serverTimestamp(), updatedBy: uid
         });
         logActivity(tx, ref, uid, email, 'project.update', `${email} joined as ${invite.role}`);
-        joined.push(projectId);
+        return 'joined';
+      });
+      if (outcome === 'joined') joined.push(projectId);
+      if (outcome !== 'waiting') settled.push(projectId);
+    }
+    if (inviteSnap.exists) {
+      await db.runTransaction(async (tx) => {
+        const cur = await tx.get(inviteRef);
+        if (!cur.exists) return;
+        const left = Object.keys(cur.data().invites || {}).filter((pid) => !settled.includes(pid));
+        if (!left.length) tx.delete(inviteRef);
+        else if (settled.length) {
+          tx.set(inviteRef, { invites: Object.fromEntries(settled.map((pid) => [pid, FieldValue.delete()])) }, { merge: true });
+        }
       });
     }
-    if (inviteSnap.exists) await inviteRef.delete();
     return { joined, needsVerification: false };
   } catch (err) { throw asHttpsError(err); }
 });

@@ -412,8 +412,9 @@ test('handleEvent finds the user by metadata, customer id or checkout reference'
   assert.equal(await billing.handleEvent({ stripe, db, env, serverTimestamp: ts, event: ev('invoice.paid', { parent: { subscription_details: { subscription: 'sub_2' } } }) }), 'applied:active');
   assert.equal(db.users.get('u2').subscriptionStatus, 'active');
 
-  // By client_reference_id on the checkout session.
-  const db3 = fakeDb();
+  // By client_reference_id on the checkout session (createCheckout has
+  // already made the users doc).
+  const db3 = fakeDb({ u3: {} });
   const stripe3 = fakeStripe({ sub_3: sub({ id: 'sub_3', customer: 'cus_3', metadata: {} }) });
   assert.equal(await billing.handleEvent({ stripe: stripe3, db: db3, env, serverTimestamp: ts, event: ev('checkout.session.completed', { mode: 'subscription', subscription: 'sub_3', client_reference_id: 'u3' }) }), 'applied:active');
   assert.equal(db3.users.get('u3').stripeCustomerId, 'cus_3');
@@ -421,6 +422,17 @@ test('handleEvent finds the user by metadata, customer id or checkout reference'
   // Nobody to credit.
   const stripe4 = fakeStripe({ sub_4: sub({ id: 'sub_4', customer: 'cus_4', metadata: {} }) });
   assert.equal(await billing.handleEvent({ stripe: stripe4, db: fakeDb(), env, serverTimestamp: ts, event: ev('customer.subscription.deleted', { id: 'sub_4' }) }), 'unknown-user');
+});
+
+test('handleEvent never writes back the users doc of a deleted account', async () => {
+  // The admin deleted the account while its plan was set to end; Stripe then
+  // reports the end of the subscription, which still names the uid.
+  const db = fakeDb({ other: { stripeCustomerId: 'cus_9' } });
+  const stripe = fakeStripe({ sub_1: sub({ status: 'canceled' }) });
+  assert.equal(await billing.handleEvent({ stripe, db, env, serverTimestamp: ts, event: ev('customer.subscription.deleted', { id: 'sub_1' }) }), 'unknown-user');
+  const stripe3 = fakeStripe({ sub_3: sub({ id: 'sub_3', customer: 'cus_3', metadata: {} }) });
+  assert.equal(await billing.handleEvent({ stripe: stripe3, db, env, serverTimestamp: ts, event: ev('checkout.session.completed', { mode: 'subscription', subscription: 'sub_3', client_reference_id: 'gone' }) }), 'unknown-user');
+  assert.deepEqual([...db.users.keys()], ['other']);
 });
 
 test('handleEvent reads older invoice payloads', () => {
