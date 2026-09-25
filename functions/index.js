@@ -360,11 +360,13 @@ exports.projectSetMember = functions.https.onCall(async (data, context) => {
 });
 
 // Remove a member (data.uid) or cancel a pending invite (data.email).
+// Leaving a project yourself needs no subscription; the rest does.
 exports.projectRemoveMember = functions.https.onCall(async (data, context) => {
   try {
     if (!context.auth) throw new PlanError('unauthenticated', 'Sign in.');
     const callerUid = context.auth.uid;
     const { projectId, uid, email } = data || {};
+    if (uid !== callerUid) await assertSubscribed(context, 'manage a team');
     if (!projectId || typeof projectId !== 'string') throw new PlanError('invalid-argument', 'projectId is required.');
     const ref = db.collection('projects').doc(projectId);
     return await db.runTransaction(async (tx) => {

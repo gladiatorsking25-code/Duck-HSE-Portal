@@ -453,3 +453,22 @@ test('signing in joins the invited projects and keeps only the invites to archiv
   assert.deepEqual(second.joined, ['pArch']);
   assert.equal(await get('projectInvites/bob@example.com'), undefined);
 });
+
+test('without a subscription you can leave a project, but not remove others or cancel invites', { skip }, async () => {
+  await db.doc('users/lapsed').set({ subscriptionStatus: 'expired', trialEndsAt: NOW - DAY });
+  await db.doc('users/ed').set({ subscriptionStatus: 'expired', trialEndsAt: NOW - DAY });
+  await db.doc('users/own').set({ compForever: true });
+  await db.doc('projects/pT').set({
+    name: 'Team', status: 'active', ownerUid: 'lapsed',
+    members: { lapsed: 'owner', own: 'manager', ed: 'editor', vi: 'viewer' }, memberUids: ['lapsed', 'own', 'ed', 'vi'],
+    memberEmails: {}, pendingInvites: [{ email: 'x@example.com', role: 'viewer' }]
+  });
+  const refused = (e) => e.code === 'permission-denied' && /active subscription is required to manage a team/.test(e.message);
+  await assert.rejects(fns().projectRemoveMember.run({ projectId: 'pT', uid: 'vi' }, as('lapsed', 'lapsed@example.com')), refused);
+  await assert.rejects(fns().projectRemoveMember.run({ projectId: 'pT', email: 'x@example.com' }, as('lapsed', 'lapsed@example.com')), refused);
+  assert.deepEqual((await get('projects/pT')).memberUids, ['lapsed', 'own', 'ed', 'vi']);
+
+  assert.deepEqual(await fns().projectRemoveMember.run({ projectId: 'pT', uid: 'ed' }, as('ed', 'ed@example.com')), { status: 'removed' });
+  assert.deepEqual(await fns().projectRemoveMember.run({ projectId: 'pT', uid: 'vi' }, as('own', 'own@example.com')), { status: 'removed' });
+  assert.deepEqual((await get('projects/pT')).memberUids, ['lapsed', 'own']);
+});
