@@ -28,8 +28,9 @@ Follow the steps in order the first time. After that, see
 - **Google Workspace** with a shared drive, for project files and backups
   ([DRIVE_FILES.md](DRIVE_FILES.md)). Optional: without it, everything else
   works and the Files panel says storage is not set up.
-- A computer with **Node.js 20 or newer** (<https://nodejs.org>, the LTS
-  version). Windows, macOS and Linux all work.
+- A computer with **Node.js 22 or newer** (<https://nodejs.org>, the LTS
+  version). Windows, macOS and Linux all work. The Cloud Functions run on
+  Node.js 22 too (`firebase.json`).
 
 **Never paste a secret key into a chat, an email, or any file in the
 repository.** Secrets go only into Firebase's secret storage, with the commands
