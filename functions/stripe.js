@@ -94,6 +94,31 @@ function entitlementPatch(sub, prices, current = {}, now = Date.now()) {
   return patch;
 }
 
+// Stripe statuses where the customer already has a card subscription, or is
+// part-way through starting one. Another Checkout would bill them twice.
+const OPEN_STATUSES = ['active', 'trialing', 'past_due', 'incomplete'];
+
+// The customer's subscription to use instead of a new Checkout, or null.
+// Prefers one that gives access, then the one paid furthest ahead.
+function openSubscription(subs) {
+  const rank = (s) => ['active', 'in_grace', 'pending_payment'].indexOf(mapStatus(s.status));
+  const open = (subs || []).filter((s) => s && OPEN_STATUSES.includes(s.status));
+  open.sort((a, b) => rank(a) - rank(b) || periodEndMillis(b) - periodEndMillis(a));
+  return open[0] || null;
+}
+
+// Stripe's answer when a saved customer ID is not in this Stripe account and
+// mode: typically a test-mode customer after the switch to live keys, or one
+// deleted in the Dashboard.
+function isMissingCustomer(err) {
+  return !!err && err.code === 'resource_missing' && (!err.param || err.param === 'customer');
+}
+
+// FieldValue.delete(), loaded only when needed so the tests run without Firebase.
+function firestoreDelete() {
+  return require('firebase-admin/firestore').FieldValue.delete();
+}
+
 async function findUid(db, sub) {
   const fromMeta = sub.metadata && sub.metadata.uid;
   if (fromMeta) return fromMeta;
@@ -104,7 +129,7 @@ async function findUid(db, sub) {
 }
 
 /** Create a Checkout Session for `plan`. Returns { url } or { alreadySubscribed: true }. */
-async function createCheckout({ stripe, db, uid, email, plan, env, serverTimestamp }) {
+async function createCheckout({ stripe, db, uid, email, plan, env, serverTimestamp, deleteField = firestoreDelete }) {
   const cfg = config(env);
   assertOrigin(cfg.origin);
   const price = cfg.prices[plan];
@@ -112,6 +137,10 @@ async function createCheckout({ stripe, db, uid, email, plan, env, serverTimesta
 
   const userRef = db.collection('users').doc(uid);
   const user = (await userRef.get()).data() || {};
+  // A payment does not lift an admin revoke (see entitlementPatch), so don't take one.
+  if (user.subscriptionStatus === 'revoked') {
+    throw new BillingError('failed-precondition', 'This account is suspended. Please contact support.');
+  }
   const live = ['active', 'in_grace'].includes(user.subscriptionStatus)
     && Number(user.subscriptionExpiryMillis || 0) > Date.now();
   if (live && user.subscriptionProvider === 'stripe') return { alreadySubscribed: true };
@@ -120,19 +149,49 @@ async function createCheckout({ stripe, db, uid, email, plan, env, serverTimesta
   }
 
   let customer = user.stripeCustomerId;
+  let missingCustomer = '';
+  if (customer) {
+    // The account can lag behind Stripe (a slow or failing webhook, or a
+    // payment made in another tab), so ask Stripe before opening a second
+    // Checkout on the same customer. Without a status filter Stripe lists
+    // every subscription that is not cancelled.
+    let subs = null;
+    try {
+      subs = await stripe.subscriptions.list({ customer, limit: 20 });
+    } catch (err) {
+      if (!isMissingCustomer(err)) throw err;
+      missingCustomer = customer;
+      customer = '';
+    }
+    const existing = subs && openSubscription(subs.data);
+    if (existing) {
+      // Write what the webhook would have written; this also repairs a missed one.
+      const patch = entitlementPatch(existing, cfg.prices, user);
+      if (patch) await userRef.set(Object.assign(patch, { subscriptionUpdatedAt: serverTimestamp() }), { merge: true });
+      return { alreadySubscribed: true };
+    }
+  }
   if (!customer) {
     const created = await stripe.customers.create(
       { email: email || undefined, metadata: { uid } },
-      { idempotencyKey: `customer-${uid}` }
+      // A new key when replacing a missing customer, or Stripe could replay the old one.
+      { idempotencyKey: missingCustomer ? `customer-${uid}-${missingCustomer}` : `customer-${uid}` }
     );
     customer = created.id;
-    await userRef.set({ stripeCustomerId: customer, subscriptionUpdatedAt: serverTimestamp() }, { merge: true });
+    const saved = { stripeCustomerId: customer, subscriptionUpdatedAt: serverTimestamp() };
+    if (missingCustomer) {
+      // The saved subscription ID belongs to the missing customer too.
+      saved.stripeSubscriptionId = deleteField();
+      console.warn(`Stripe customer ${missingCustomer} of user ${uid} not found; replaced with ${customer}`);
+    }
+    await userRef.set(saved, { merge: true });
   }
 
   // Subscribing during the free trial keeps the rest of the trial: the first
   // charge happens when it ends. Only for a first card subscription.
   const trialEnd = Number(user.trialEndsAt || 0);
-  const keepTrial = !user.stripeSubscriptionId && trialEnd - Date.now() >= MIN_TRIAL_MS;
+  const hadCardSubscription = !!user.stripeSubscriptionId && !missingCustomer;
+  const keepTrial = !hadCardSubscription && trialEnd - Date.now() >= MIN_TRIAL_MS;
 
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
@@ -154,11 +213,20 @@ async function createPortal({ stripe, db, uid, env }) {
   const cfg = config(env);
   assertOrigin(cfg.origin);
   const user = (await db.collection('users').doc(uid).get()).data() || {};
-  if (!user.stripeCustomerId) throw new BillingError('failed-precondition', 'There is no card subscription on this account.');
-  const session = await stripe.billingPortal.sessions.create({
-    customer: user.stripeCustomerId,
-    return_url: `${cfg.origin}/index.html`
-  });
+  const none = () => new BillingError('failed-precondition', 'There is no card subscription on this account.');
+  if (!user.stripeCustomerId) throw none();
+  let session;
+  try {
+    session = await stripe.billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: `${cfg.origin}/index.html`
+    });
+  } catch (err) {
+    if (!isMissingCustomer(err)) throw err;
+    // Not "try again": retrying cannot help. The next checkout replaces the customer.
+    console.warn(`Stripe customer ${user.stripeCustomerId} of user ${uid} not found (billing portal)`);
+    throw none();
+  }
   return { url: session.url };
 }
 
@@ -207,6 +275,6 @@ async function handleEvent({ stripe, db, event, env, serverTimestamp }) {
 }
 
 module.exports = {
-  BillingError, config, mapStatus, periodEndMillis, entitlementPatch,
+  BillingError, config, mapStatus, periodEndMillis, entitlementPatch, openSubscription, isMissingCustomer,
   createCheckout, createPortal, handleEvent, subscriptionIdOf
 };
