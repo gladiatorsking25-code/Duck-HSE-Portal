@@ -16,12 +16,17 @@
 //    "Google Play Android Developer API".
 // 3. Play Console → Setup → API access → link this Cloud project, then give the
 //    Functions runtime service account (PROJECT_ID@appspot.gserviceaccount.com)
-//    the "View financial data" permission.
+//    the "View financial data" and "Manage orders and subscriptions" permissions
+//    (the second lets the server acknowledge purchases).
 // 4. Make yourself the first admin: Firebase Console → Firestore → users/<your uid>
 //    → set field  role: "admin"  (String). Only an admin can use the admin
 //    functions below; this bootstrap is done once, by hand, with console rights.
-// 5. For Real-time Developer Notifications: Play Console → Monetization setup →
-//    create a Pub/Sub topic named to match RTDN_TOPIC below.
+// 5. Real-time Developer Notifications (required: this is how renewals,
+//    cancellations and refunds reach the account): deploying creates the
+//    Pub/Sub topic RTDN_TOPIC. Grant
+//    google-play-developer-notifications@system.gserviceaccount.com the
+//    "Pub/Sub Publisher" role on it, then enter the full topic name in Play
+//    Console → Monetization setup. Steps: docs/SECURITY.md §6.
 // 6. `firebase deploy --only functions,firestore:rules`
 
 const functions = require('firebase-functions/v1');
@@ -53,62 +58,47 @@ exports.onUserCreate = functions.auth.user().onCreate(async (user) => {
 });
 
 // -------------------------------------------------------------------------
-// Play Billing purchase verification (called by the app after a purchase).
+// Play Billing purchase verification (called by the app after a purchase, and
+// by "Restore purchases"). The checks and the one-account rule are in play.js.
 // -------------------------------------------------------------------------
-async function getAndroidPublisher() {
-  const auth = new google.auth.GoogleAuth({
-    scopes: ['https://www.googleapis.com/auth/androidpublisher']
-  });
-  const authClient = await auth.getClient();
-  return google.androidpublisher({ version: 'v3', auth: authClient });
-}
-
-async function applyPurchaseToUser(uid, packageName, subscriptionId, purchaseToken) {
-  const androidpublisher = await getAndroidPublisher();
-  const res = await androidpublisher.purchases.subscriptions.get({
-    packageName, subscriptionId, token: purchaseToken
-  });
-  const sub = res.data;
-  const expiry = sub.expiryTimeMillis ? Number(sub.expiryTimeMillis) : null;
-  // paymentState: 0 pending, 1 received, 2 free trial, 3 deferred.
-  const active = expiry && expiry > Date.now();
-  const status = active ? (sub.paymentState === 0 ? 'in_grace' : 'active') : 'expired';
-
-  // A lapsed Play purchase must not end a card subscription that is still live.
-  const userRef = db.collection('users').doc(uid);
-  const current = (await userRef.get()).data() || {};
-  const stripeLive = current.subscriptionProvider === 'stripe'
-    && ['active', 'in_grace'].includes(current.subscriptionStatus)
-    && Number(current.subscriptionExpiryMillis || 0) > Date.now();
-  if (active || !stripeLive) {
-    await userRef.set({
-      subscriptionProvider: 'play',
-      subscriptionStatus: status,
-      subscriptionId,
-      subscriptionExpiryMillis: expiry,
-      subscriptionUpdatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
+const play = require('./play');
+let publisherClient = null;
+function androidPublisher() {
+  if (!publisherClient) {
+    const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/androidpublisher'] });
+    publisherClient = auth.getClient().then((authClient) => google.androidpublisher({ version: 'v3', auth: authClient }));
+    publisherClient.catch(() => { publisherClient = null; });
   }
-
-  // Remember which user owns this token so RTDN events can find them later.
-  await db.collection('purchaseTokens').doc(purchaseToken).set({
-    uid, packageName, subscriptionId, updatedAt: Date.now()
-  }, { merge: true });
-
-  return { status, expiryTimeMillis: expiry };
+  return publisherClient;
 }
+async function playVerify(packageName, subscriptionId, token) {
+  const res = await (await androidPublisher()).purchases.subscriptions.get({ packageName, subscriptionId, token });
+  return res.data;
+}
+async function playAcknowledge(packageName, subscriptionId, token) {
+  await (await androidPublisher()).purchases.subscriptions.acknowledge({ packageName, subscriptionId, token, requestBody: {} });
+}
+const playDeps = () => ({
+  db, verify: playVerify, acknowledge: playAcknowledge, env: process.env,
+  serverTimestamp: () => FieldValue.serverTimestamp()
+});
 
 exports.verifyPlayPurchase = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before verifying a purchase.');
   }
-  const { packageName, subscriptionId, purchaseToken } = data || {};
-  if (!packageName || !subscriptionId || !purchaseToken) {
-    throw new functions.https.HttpsError('invalid-argument', 'packageName, subscriptionId, and purchaseToken are all required.');
+  // data.packageName is ignored: the server checks its own app (play.js).
+  const { subscriptionId, purchaseToken } = data || {};
+  if (!subscriptionId || !purchaseToken) {
+    throw new functions.https.HttpsError('invalid-argument', 'subscriptionId and purchaseToken are both required.');
   }
   try {
-    return await applyPurchaseToUser(context.auth.uid, packageName, subscriptionId, purchaseToken);
+    return await play.applyPurchase(Object.assign(playDeps(), {
+      uid: context.auth.uid, subscriptionId, purchaseToken, source: 'client'
+    }));
   } catch (err) {
+    if (err instanceof functions.https.HttpsError) throw err;
+    if (err instanceof play.PlayError) throw new functions.https.HttpsError(err.code, err.message);
     console.error('Play purchase verification failed', err);
     throw new functions.https.HttpsError('internal', 'Could not verify this purchase with Google Play.');
   }
@@ -116,8 +106,9 @@ exports.verifyPlayPurchase = functions.https.onCall(async (data, context) => {
 
 // -------------------------------------------------------------------------
 // Real-time Developer Notifications: Play pushes renew/cancel/expire/grace
-// events here the moment they happen, so a cancelled subscription is reflected
-// immediately instead of only when the user reopens the app.
+// events here the moment they happen. A renewal keeps the same token, so
+// without these the account only hears of it when the Android app next checks
+// Google Play. Required: docs/SECURITY.md §6.
 // -------------------------------------------------------------------------
 exports.playRTDN = functions.pubsub.topic(RTDN_TOPIC).onPublish(async (message) => {
   let payload;
@@ -127,14 +118,10 @@ exports.playRTDN = functions.pubsub.topic(RTDN_TOPIC).onPublish(async (message) 
     console.error('Bad RTDN payload', e);
     return;
   }
-  const note = payload.subscriptionNotification;
-  if (!note || !note.purchaseToken) return; // ignore test/other notifications
-
-  const map = await db.collection('purchaseTokens').doc(note.purchaseToken).get();
-  if (!map.exists) { console.warn('RTDN for unknown token', note.purchaseToken); return; }
-  const { uid, packageName, subscriptionId } = map.data();
   try {
-    await applyPurchaseToUser(uid, packageName, subscriptionId || note.subscriptionId, note.purchaseToken);
+    const outcome = await play.handleNotification(Object.assign(playDeps(), { payload }));
+    if (outcome === 'unknown-token') console.warn('RTDN for unknown token', payload.subscriptionNotification.purchaseToken);
+    else console.log('Play notification', outcome);
   } catch (err) {
     console.error('RTDN re-verification failed', err);
   }
