@@ -358,7 +358,9 @@ try {
   await alice.waitForURL(/permit\.html\?id=.*mode=view/, { timeout: 15000 });
   const year = new Date().getFullYear();
   // Numbers carry the issuer's code, so two people never issue the same one.
-  const code = await alice.evaluate(() => PermitTypes.issuerCode(firebase.auth().currentUser.uid));
+  // The page has just loaded, so wait for the sign-in to be restored.
+  const code = await (await alice.waitForFunction(() => typeof firebase !== 'undefined' && firebase.apps.length
+    && firebase.auth().currentUser && PermitTypes.issuerCode(firebase.auth().currentUser.uid), null, { timeout: 20000 })).jsonValue();
   assert.match(code, /^[A-Z][0-9A-Z]{3}$/);
   assert.equal(await alice.inputValue('#permitNumber'), `CSE-${year}-${code}-0001`);
   assert.match(await alice.textContent('#pageTitle'), new RegExp(`Confined space.*CSE-${year}-${code}-0001`, 'i'));
