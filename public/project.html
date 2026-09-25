@@ -9,7 +9,7 @@
 <script src="js/subscription-config.js"></script>
 <script src="js/entitlements.js"></script>
 <script src="js/access.js"></script>
-<script>requireAccess();</script>
+<script>requireAccess({ allowLapsed: true });</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Project · Duck HSE Portal</title>
@@ -39,12 +39,13 @@
         <div class="crumb"><a href="projects.html">Projects</a> / <span id="crumbName">…</span></div>
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn" type="button" id="exportBtn" disabled>Export CSV</button>
+        <button class="btn" type="button" id="exportBtn" disabled title="Every tracked item, including closed ones, as a spreadsheet (CSV) file">Export all items (CSV)</button>
         <button class="btn btn-primary" type="button" id="addItemBtn" hidden>+ Add item</button>
       </div>
     </div>
 
     <div class="content">
+      <div id="readOnlyBanner" hidden></div>
       <div id="notice"></div>
       <div id="projectBody" hidden>
         <div class="card project-head" id="projectHead"></div>
@@ -100,7 +101,7 @@
                   </select>
                   <button class="btn btn-primary" type="submit" id="inviteBtn">Invite</button>
                 </div>
-                <p class="hint" style="font-size:12px; color:var(--ink-soft); margin:8px 0 0;">Editors add and update items. Viewers can only read. Managers can also manage the team. Each person needs their own Duck HSE Portal account to edit. They join once their email address is verified.</p>
+                <p class="hint" style="font-size:12px; color:var(--ink-soft); margin:8px 0 0;">Editors add and update items. Viewers can only read. Managers can also manage the team. Each person needs their own Duck HSE Portal account. To make changes they also need a free trial or subscription; to view, they do not. They join once their email address is verified.</p>
               </form>
               <div id="teamMsg"></div>
               <button class="btn btn-sm" type="button" id="leaveBtn" hidden style="margin-top:12px;">Leave project</button>
