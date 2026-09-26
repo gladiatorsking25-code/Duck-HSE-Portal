@@ -89,6 +89,20 @@ test('a user cannot make themselves admin', async () => {
   await assertFails(updateDoc(doc(db('lapsed'), 'users', 'lapsed'), { role: 'admin' }));
 });
 
+test('a user cannot set or change their card subscription fields', async () => {
+  const me = doc(db('lapsed'), 'users', 'lapsed');
+  for (const patch of [
+    { subscriptionProvider: 'stripe' },
+    { stripeCustomerId: 'cus_someone_else' },
+    { stripeSubscriptionId: 'sub_someone_else' },
+    { cancelAtPeriodEnd: false }
+  ]) await assertFails(updateDoc(me, patch));
+  // Not even when creating the profile.
+  await assertFails(setDoc(doc(db('fresh'), 'users', 'fresh'), { email: 'fresh@example.com', stripeCustomerId: 'cus_1' }));
+  // Ordinary profile edits still work.
+  await assertSucceeds(updateDoc(me, { displayName: 'Lee' }));
+});
+
 // ---- Creating projects ---------------------------------------------------
 test('a trial user can create a project as its sole owner', async () => {
   await assertSucceeds(setDoc(doc(db('owner'), 'projects', 'new1'), newProject('owner')));

@@ -30,7 +30,7 @@
     <div class="topbar">
       <div>
         <h2>Privacy Notice</h2>
-        <div class="crumb">Last updated: 11 September 2026</div>
+        <div class="crumb">Last updated: 24 September 2026</div>
       </div>
       <a class="btn" href="index.html">Back to dashboard</a>
     </div>
@@ -58,8 +58,8 @@
         <li>Sign-in identifiers used by the app's access gate (see the Terms of Use and the app's README for how that gate currently works).</li>
       </ul>
       <p>It does <strong>not</strong> collect health data, financial/payment card data
-      (payment for any paid subscription is handled entirely by Google Play, not by this
-      app), precise device location, or advertising identifiers.</p>
+      (card payments are handled entirely by Stripe on the website, or by Google Play in the
+      Android app, not by this app), precise device location, or advertising identifiers.</p>
 
       <div class="section-title">2. Where this data is stored today</div>
       <p>In the current build, all of the data listed above is stored only in your
@@ -102,11 +102,21 @@
       requirements stricter than the general PDPL position.</p>
 
       <div class="section-title">3b. Payments and subscriptions</div>
-      <p>Any paid subscription is sold and processed entirely by <strong>Google Play
-      Billing</strong>. The App never sees, receives, or stores your card number, bank details,
-      or billing address. What the App may receive from Google is a purchase token and
-      subscription status used solely to unlock paid features. Google's own privacy policy
-      governs the payment itself.</p>
+      <p>Paid subscriptions are processed by <strong>Stripe</strong> when bought on the website,
+      and by <strong>Google Play Billing</strong> when bought in the Android app. The App never
+      sees, receives, or stores your card number or bank details.</p>
+      <ul>
+        <li><strong>Website (Stripe).</strong> You enter your payment details on Stripe's own
+        checkout page. Your account email address is shared with Stripe so that receipts reach
+        you. The App's server keeps your Stripe customer and subscription reference, plan,
+        status, renewal date, and whether a cancellation is pending, used solely to unlock paid
+        features and let you manage your plan. Stripe's privacy policy
+        (<a href="https://stripe.com/privacy" target="_blank" rel="noopener">stripe.com/privacy</a>)
+        governs the payment itself.</li>
+        <li><strong>Android app (Google Play).</strong> The App receives a purchase token and
+        subscription status from Google, used solely to unlock paid features. Google's own
+        privacy policy governs the payment itself.</li>
+      </ul>
 
       <div class="section-title">4. Legal basis for processing</div>
       <p>Where the App does process personal data (locally, as described above), the

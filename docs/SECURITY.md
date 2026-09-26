@@ -46,6 +46,9 @@ it changes nothing on the server.*
   account JSON key in the web app or the repo.
 - Any admin credentials. The first admin is set by hand in the Firebase Console
   (§6), never in client code.
+- **The Stripe secret key and webhook signing secret.** They live only in
+  Firebase's secret storage (`firebase functions:secrets:set`), never in
+  `functions/.env`, the web app or the repo. See `docs/PAYMENTS.md`.
 
 ---
 
@@ -58,8 +61,9 @@ decide access are written **exclusively by Cloud Functions** (Admin SDK):
 |---|---|---|
 | `role` | admin bootstrap / `adminSetRole` | `admin` = full access always |
 | `trialStartedAt` / `trialEndsAt` | `onUserCreate` | the free-trial window |
-| `subscriptionStatus` | `verifyPlayPurchase` / RTDN | `active`, `in_grace`, `expired`, … |
-| `subscriptionExpiryMillis` | `verifyPlayPurchase` / RTDN | when paid access ends |
+| `subscriptionStatus` | `verifyPlayPurchase` / RTDN / `stripeWebhook` | `active`, `in_grace`, `expired`, … |
+| `subscriptionExpiryMillis` | `verifyPlayPurchase` / RTDN / `stripeWebhook` | when paid access ends |
+| `subscriptionProvider`, `stripeCustomerId`, `stripeSubscriptionId`, `cancelAtPeriodEnd` | `verifyPlayPurchase` / `stripeCreateCheckout` / `stripeWebhook` | which store the plan is with, and the Stripe references |
 | `adminGrantUntil` / `compForever` | `adminSetSubscription` | a manual owner grant |
 
 `js/entitlements.js` (`computeAccess`) reads that doc and returns the state, in
@@ -85,7 +89,9 @@ grant.
 | Access decision | `js/entitlements.js` | client (reads server truth) |
 | Page gate + routing to login/paywall | `js/access.js` (`requireAccess`) | client |
 | Paywall | `subscribe.html` + `js/billing.js` | client |
-| Purchase → verify → entitlement | `verifyPlayPurchase` | server |
+| Purchase → verify → entitlement (Android) | `verifyPlayPurchase` | server |
+| Card checkout and billing portal (web) | `stripeCreateCheckout`, `stripePortal` | server |
+| Stripe → entitlement (signature-checked) | `stripeWebhook` | server |
 | Real-time renew/cancel | `playRTDN` | server |
 | Owner admin dashboard | `admin.html` + `js/admin.js` | client |
 | Admin grant/revoke/extend/role | `adminSetSubscription`, `adminSetRole`, `adminListUsers` | server |

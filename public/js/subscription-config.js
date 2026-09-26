@@ -33,8 +33,23 @@ const SUBSCRIPTION_CONFIG = {
   // attractive: people subscribe to a maintained, improving tool.
   PLAN_NOTE: 'Your subscription keeps Duck HSE Portal maintained and updated — new crane data, monthly checklists, safety features, and support.',
   // A UAE-consumer-law-friendly one-liner (auto-renewal + VAT + cancellation are
-  // also spelled out in the Terms). Google Play handles VAT and billing.
-  PLAN_TERMS: 'Includes a 14-day free trial, then $5 / month. Auto-renews monthly — cancel anytime in Google Play. Price includes VAT where applicable.',
+  // also spelled out in the Terms).
+  PLAN_TERMS: 'Includes a 14-day free trial, then $5 / month. Auto-renews monthly until you cancel: on the web from "Manage plan", in the Android app from Google Play. Price includes VAT where applicable.',
+
+  // ---- Card payments on the website (Stripe Checkout) ----
+  // Used everywhere except inside the Android app, which must use Play Billing.
+  // Each plan id must have a Stripe price set on the server
+  // (STRIPE_PRICE_MONTHLY / STRIPE_PRICE_YEARLY in functions/.env). The prices
+  // here are only what the page shows; Stripe charges the price you created
+  // there. Set enabled:false to hide card payments. See docs/PAYMENTS.md.
+  WEB_PAYMENTS: {
+    enabled: true,
+    provider: 'stripe',
+    PLANS: [
+      { id: 'monthly', label: 'Monthly', per: 'per month', displayPrice: '$5' }
+      // { id: 'yearly', label: 'Yearly', per: 'per year', displayPrice: '$50' }
+    ]
+  },
 
   // ---- Direct / offline payment (invoice, bank transfer, PayPal) ----
   // IMPORTANT: Google Play requires Play Billing for digital subscriptions sold

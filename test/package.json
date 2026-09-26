@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "test": "npm run test:unit && npm run test:rules",
-    "test:unit": "node --test projects-plan.test.mjs",
+    "test:unit": "node --test projects-plan.test.mjs stripe.test.mjs",
     "test:rules": "cd .. && test/node_modules/.bin/firebase emulators:exec --only firestore --project demo-duck-hse \"node --test test/rules.test.mjs\"",
-    "test:e2e": "cd .. && test/node_modules/.bin/firebase emulators:exec --only auth,firestore,functions --project demo-duck-hse \"node test/e2e.mjs\""
+    "test:e2e": "cd .. && test/node_modules/.bin/firebase emulators:exec --only auth,firestore,functions --project demo-duck-hse \"node test/e2e.mjs\"",
+    "test:e2e:payments": "node e2e-payments.mjs"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.0",

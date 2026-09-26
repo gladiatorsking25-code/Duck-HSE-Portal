@@ -9,6 +9,36 @@ runs from any browser, deployable free on GitHub Pages.
 
 ## Changelog
 
+- **Card payments on the website (v1.9.0)**: customers can now subscribe by
+  card with Stripe Checkout. Setup guide: `docs/PAYMENTS.md`.
+  - **Subscribe page.** On the web it offers the plans from
+    `WEB_PAYMENTS` in `subscription-config.js` and opens Stripe's hosted
+    checkout. Inside the Android app it still uses Google Play Billing, as
+    Play's policy requires. The invoice / bank transfer request stays as an
+    option. After paying, the page waits for the confirmation and opens the app.
+  - **Free trial kept.** Subscribing during the 14-day trial starts billing when
+    the trial ends (when at least 2 days are left). No second trial on a later
+    subscription.
+  - **Dashboard plan panel.** Card subscribers get **Manage plan** (Stripe's
+    billing portal: card, cancel, invoices). Play subscribers get a link to
+    Google Play. The panel shows when a cancelled plan ends and when a payment
+    failed. Admin grants no longer show a dead "Manage plan" link.
+  - **Server.** New Cloud Functions `stripeCreateCheckout`, `stripePortal` and
+    `stripeWebhook` (`functions/stripe.js`). The webhook checks Stripe's
+    signature and always re-reads the subscription from Stripe, so repeated or
+    out-of-order events end in the right state. Secrets live in Firebase's
+    secret storage, settings in `functions/.env` (see `.env.example`).
+  - **Safety.** `firestore.rules` block clients from writing
+    `subscriptionProvider`, `stripeCustomerId`, `stripeSubscriptionId` and
+    `cancelAtPeriodEnd`. A lapsed Stripe subscription never ends a live Play
+    one, and the other way round. A payment does not lift an admin revoke, and
+    an admin grant no longer hides a paying customer's status.
+  - **Admin page** shows each account's payment provider and pending
+    cancellations.
+  - **Tests.** Stripe unit tests (22), a rules test for the new fields, and
+    `npm run test:e2e:payments` (10 steps against the emulators and a fake
+    Stripe API). The shared browser test setup moved to `test/e2e-lib.mjs`.
+
 - **Projects and teams (v1.8.0)**: new `projects.html` and `project.html`.
   - **Projects are shared.** A project has an owner, and can have managers,
     editors and viewers. People are invited by email. An invite only lands on an

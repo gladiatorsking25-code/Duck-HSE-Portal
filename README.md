@@ -10,12 +10,12 @@ and installs as an app (PWA / Android TWA).
 | Path | What it is | Where it runs |
 |---|---|---|
 | `public/` | The website: HTML, CSS, JS, icons, `.htaccess` | Your web host (Hostinger) |
-| `functions/` | Cloud Functions: trial on signup, purchase verification, admin actions | Firebase |
+| `functions/` | Cloud Functions: trial on signup, Stripe and Play payments, project teams, admin actions | Firebase |
 | `firestore.rules` | The server-side security boundary for all data | Firebase |
 | `firebase.json` | Firebase deploy config | – |
 | `test/` | Rules, unit and end-to-end tests (Firebase emulators) | Your computer / CI |
 | `twa-manifest.json` | Android (Trusted Web Activity) build config | Bubblewrap |
-| `docs/` | Security model, Firebase setup, Play Store notes, changelog | – |
+| `docs/` | Security model, Firebase and payments setup, Play Store notes, changelog | – |
 
 ## Security model (short version)
 
@@ -37,13 +37,22 @@ editor or viewer. Projects hold tracked items (actions, inspections, incidents,
 linked permits, assessments and checklists) with status, priority, due date and
 assignee, plus an activity log. See `docs/CHANGELOG.md` (v1.8.0) for details.
 
+## Subscriptions and payments
+
+New accounts get a 14-day free trial. After that, website customers pay by card
+through Stripe Checkout, and Android app users through Google Play. Stripe's
+webhook, not the browser, marks an account as paid, and customers manage or
+cancel from **Manage plan** on the dashboard. Setup, testing and going live:
+[`docs/PAYMENTS.md`](docs/PAYMENTS.md).
+
 ## Tests
 
 ```
 cd test
 npm install
-npm test          # membership unit tests + Firestore rules tests (needs Java 11+)
-npm run test:e2e  # browser run against the auth/Firestore/Functions emulators
+npm test                   # unit tests (teams, Stripe) + Firestore rules tests (needs Java 11+)
+npm run test:e2e           # projects and teams in a browser, against the emulators
+npm run test:e2e:payments  # subscribe → pay → unlock → cancel, with a fake Stripe
 ```
 
 `test:e2e` uses Playwright; set `CHROMIUM_PATH` if Chromium isn't installed
@@ -53,7 +62,8 @@ where Playwright expects it. `functions/` needs `npm install` first.
 
 1. **Firebase** (once, then whenever rules or functions change):
    `firebase deploy --only firestore:rules,functions`
-   Setup steps: [`docs/FIREBASE_SETUP.md`](docs/FIREBASE_SETUP.md).
+   Setup steps: [`docs/FIREBASE_SETUP.md`](docs/FIREBASE_SETUP.md), then
+   [`docs/PAYMENTS.md`](docs/PAYMENTS.md) for Stripe.
 2. **Website:** upload the *contents* of `public/` (including the hidden
    `.htaccess`) into `public_html/` on Hostinger. Any Hostinger plan works; no
    Node.js is needed on the host. Turn on the free SSL certificate first.
