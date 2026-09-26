@@ -78,6 +78,20 @@
   const PLAY_UNAVAILABLE = 'Google Play purchases are not available in this copy of the app. Update Duck HSE from the Play Store and try again. If it keeps happening, contact support.';
   const OTHER_ACCOUNT = 'The Google Play subscription on this phone is linked to another Duck HSE account. Sign in with that account to use it, or contact support.';
 
+  // Coming back from Stripe Checkout.
+  const checkoutState = new URLSearchParams(location.search).get('checkout');
+
+  // Offline, the live answer below does not come for an account without
+  // access (js/entitlements.js waits for the server to take access away), so
+  // the last known answer shows the way to the read-only records at once,
+  // without waiting for Google Play. The live answer redraws this later. Not
+  // after paying by card: the page is waiting for that payment to land.
+  const cachedAccess = Access.firebaseOn() ? Entitlements.cachedAccess() : null;
+  if (cachedAccess && !cachedAccess.hasAccess && checkoutState !== 'success') {
+    $('payLapsed').hidden = false;
+    if (!navigator.onLine) $('payStatus').textContent = 'You are offline. Subscribing needs a connection; your records are below.';
+  }
+
   // Inside the Android app: Google Play only. Play's payments policy does not
   // allow card or invoice payments there, even when Play is not working.
   // On the website: card checkout (Stripe), unless it is switched off, in
@@ -203,6 +217,20 @@
     $('payRestore').hidden = true;
     $('payManageHint').hidden = true;
     $('payNotice').innerHTML = `<div class="banner banner-warn"><div>If you think this is a mistake, please <a href="mailto:${escOff(cfg.SUPPORT_EMAIL)}">contact support</a> (${escOff(cfg.SUPPORT_EMAIL)}).</div></div>`;
+    // A card subscription is still billed while the account is suspended, so
+    // Stripe's billing portal stays open to cancel it or download invoices.
+    if (lastDoc && lastDoc.subscriptionProvider === 'stripe' && lastDoc.stripeCustomerId && !inApp) {
+      $('payNotice').insertAdjacentHTML('beforeend', '<button type="button" class="btn btn-sm" id="payPortal" style="margin-top:10px;">Manage card billing</button>');
+      const portalBtn = $('payPortal');
+      portalBtn.addEventListener('click', async () => {
+        portalBtn.disabled = true;
+        try { await WebBilling.portal(); }   // leaves the page on success
+        catch (err) {
+          portalBtn.disabled = false;
+          show('danger', (err && err.message) || 'Could not open the billing page. Please try again.');
+        }
+      });
+    }
   }
 
   async function buy(productId) {
@@ -225,12 +253,28 @@
       setTimeout(() => location.replace('index.html'), 1500);
     } catch (err) {
       if (err.code === 'other-account') { show('danger', err.message || OTHER_ACCOUNT); return; }
+      if (err.code === 'verify') { await retryVerify(); return; }
       const msg = err.code === 'cancelled' ? 'Purchase cancelled.'
         : err.code === 'unavailable' ? PLAY_UNAVAILABLE
-        : err.code === 'verify' ? 'Payment went through but we could not confirm it yet. It will unlock shortly — or contact support.'
         : 'Something went wrong with the purchase.';
       show(err.code === 'cancelled' ? 'info' : 'danger', msg);
     }
+  }
+
+  // Play took the payment but the server could not confirm it (a slow start or
+  // a Play API error). Nothing else retries it, and Google refunds a purchase
+  // nobody confirms within 3 days, so ask again with the phone's purchases.
+  async function retryVerify() {
+    $('payResult').innerHTML = '<div class="hint">Payment went through. Confirming it…</div>';
+    for (const wait of [2000, 5000]) {
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      let r = null;
+      try { r = await Billing.restore(); } catch (e) { /* try again */ }
+      if (r && (r.restored || r.otherAccount)) { await afterRestore(r, false); return; }
+    }
+    // Let the automatic check run again the next time the paywall opens.
+    try { sessionStorage.removeItem('duck_play_restored'); } catch (e) { /* storage blocked */ }
+    show('danger', 'Payment went through but we could not confirm it yet. Tap Restore purchases below to finish, or contact support.');
   }
 
   async function buyCard(plan) {
@@ -245,8 +289,7 @@
     }
   }
 
-  // Coming back from Stripe Checkout.
-  const checkoutState = new URLSearchParams(location.search).get('checkout');
+  // Came back from Stripe Checkout without paying.
   if (checkoutState === 'cancelled') show('info', 'Checkout was cancelled and you have not been charged.');
 
   function renderActivating() {
@@ -300,6 +343,8 @@
     }
     let details = null;
     try { details = await Billing.getProducts(); } catch (e) { /* not in app */ }
+    // Google Play answered after playReady() stopped waiting.
+    if (!playOk && details) playOk = true;
     // The account may have been suspended while Play answered.
     if (suspended) return;
     renderPlans(details);

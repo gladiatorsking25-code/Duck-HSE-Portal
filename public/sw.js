@@ -32,15 +32,14 @@ const FIREBASE_SDK_URLS = ['app', 'auth', 'firestore', 'functions'].map(
   (name) => `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-${name}-compat.js`);
 
 // Stores one Firebase SDK file. Google serves these files with CORS, which
-// lets the worker see that the download really worked before keeping it. If
-// that is ever refused, the file is fetched the way a <script> tag fetches it
-// (no-cors); cache.add() does not accept that kind of ("opaque") response, so
-// the copy is stored with put().
+// lets the worker see that the download really worked before keeping it; the
+// checked copy also answers the page's no-cors <script> request. Nothing is
+// kept otherwise (a failed or refused download throws or is not ok): a no-cors
+// ("opaque") copy cannot be checked, and an error page kept in its place
+// would stop sign-in on that device until the next release.
 async function cacheSdkFile(cache, url) {
-  let res = null;
-  try { res = await fetch(url, { mode: 'cors' }); } catch (e) { /* no CORS: try no-cors below */ }
-  if (!res) res = await fetch(new Request(url, { mode: 'no-cors' }));
-  if (res.ok || res.type === 'opaque') await cache.put(url, res);
+  const res = await fetch(url, { mode: 'cors' });
+  if (res.ok) await cache.put(url, res);
 }
 
 // Firebase and Google services (sign-in, Firestore, the functions, Drive)
