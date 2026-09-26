@@ -12,7 +12,7 @@
 <script>requireAccess();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>All Permits · Duck HSE Portal</title>
+<title>Permits to Work · Duck HSE Portal</title>
 <link rel="stylesheet" href="css/styles.css">
 <!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
 <link rel="manifest" href="manifest.webmanifest">
@@ -22,7 +22,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Duck HSE">
-<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and lifting permits, aligned with ADOSH-SF CoP 34.0. A planning aid, not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<meta name="description" content="Permits to work for lifting, hot work, confined space entry, work at height, excavation, energy isolation and general work, with precautions, gas tests, sign-off, suspension and close-out.">
 <link rel="icon" href="assets/icons/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
@@ -34,25 +34,27 @@
   <div class="main">
     <div class="topbar">
       <div>
-        <h2>Lifting permits</h2>
-        <div class="crumb">All permits on file</div>
+        <h2>Permits to work</h2>
+        <div class="crumb">All permits on this device and in your account</div>
       </div>
       <a class="btn btn-primary" href="permit.html">+ New permit</a>
     </div>
 
     <div class="content">
       <div class="toolbar">
-        <input type="search" id="search" placeholder="Search permit #, project, location, PIC…">
-        <select id="filterStatus">
+        <input type="search" id="search" placeholder="Search permit #, type, project, location, person in charge…">
+        <select id="filterPermitType" aria-label="Permit type"><option value="">All permit types</option></select>
+        <select id="filterStatus" aria-label="Status">
           <option value="">All statuses</option>
           <option value="active">Active</option>
-          <option value="expired">Expired</option>
           <option value="suspended">Suspended</option>
+          <option value="expired">Expired</option>
+          <option value="closed">Closed</option>
         </select>
-        <select id="filterType">
-          <option value="">All lift types</option>
-          <option value="critical">Critical only</option>
-          <option value="noncritical">Non-critical only</option>
+        <select id="filterType" aria-label="Lift type" hidden>
+          <option value="">All lifts</option>
+          <option value="critical">Critical lifts only</option>
+          <option value="noncritical">Non-critical lifts only</option>
         </select>
       </div>
       <div id="tableWrap"></div>
@@ -65,34 +67,39 @@
 <script src="js/storage.js"></script>
 <script src="js/cloud-sync.js"></script>
 <script src="js/nav.js"></script>
+<script src="js/permit-types.js"></script>
 <script>
 renderSidebar('permits');
 renderFooter('app-footer');
 
-function statusOf(p) {
-  if (p.status === 'suspended') return 'suspended';
-  if (p.validTo && new Date(p.validTo) < new Date()) return 'expired';
-  return 'active';
-}
+const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const BADGES = { active: 'badge-ok', suspended: 'badge-fail', expired: 'badge-neutral', closed: 'badge-neutral' };
 function statusBadge(s) {
-  if (s === 'suspended') return '<span class="badge badge-fail"><span class="badge-dot"></span>Suspended</span>';
-  if (s === 'expired') return '<span class="badge badge-neutral"><span class="badge-dot"></span>Expired</span>';
-  return '<span class="badge badge-ok"><span class="badge-dot"></span>Active</span>';
+  return `<span class="badge ${BADGES[s]}"><span class="badge-dot"></span>${esc(PermitTypes.STATUS_LABELS[s])}</span>`;
 }
+
+const typeSel = document.getElementById('filterPermitType');
+typeSel.innerHTML += PermitTypes.TYPES.map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
+const preset = new URLSearchParams(location.search).get('type');
+if (PermitTypes.isType(preset)) typeSel.value = preset;
 
 function render() {
   const search = document.getElementById('search').value.toLowerCase();
+  const typeKey = typeSel.value;
   const statusFilter = document.getElementById('filterStatus').value;
-  const typeFilter = document.getElementById('filterType').value;
+  const liftFilter = document.getElementById('filterType');
+  liftFilter.hidden = typeKey !== 'lifting';
+  const lift = liftFilter.hidden ? '' : liftFilter.value;
 
-  let list = DB.getPermits().sort((a,b) => new Date(b.date||0) - new Date(a.date||0));
+  let list = DB.getPermits().sort((a,b) => new Date(b.validFrom || b.date || 0) - new Date(a.validFrom || a.date || 0));
   list = list.filter(p => {
-    const s = statusOf(p);
-    if (statusFilter && s !== statusFilter) return false;
-    if (typeFilter === 'critical' && !p.isCriticalLift) return false;
-    if (typeFilter === 'noncritical' && p.isCriticalLift) return false;
+    const t = PermitTypes.typeOf(p);
+    if (typeKey && t.key !== typeKey) return false;
+    if (statusFilter && PermitTypes.statusOf(p) !== statusFilter) return false;
+    if (lift === 'critical' && !p.isCriticalLift) return false;
+    if (lift === 'noncritical' && p.isCriticalLift) return false;
     if (search) {
-      const hay = `${p.permitNumber} ${p.projectNumber||''} ${p.location||''} ${p.personInCharge||''}`.toLowerCase();
+      const hay = `${p.permitNumber || ''} ${t.label} ${p.projectNumber || ''} ${p.location || ''} ${p.personInCharge || ''} ${p.workDescription || ''}`.toLowerCase();
       if (!hay.includes(search)) return false;
     }
     return true;
@@ -104,39 +111,45 @@ function render() {
     return;
   }
   wrap.innerHTML = `
-    <table class="data-table">
+    <div class="table-scroll"><table class="data-table">
       <thead><tr>
-        <th>Permit #</th><th>Project</th><th>Location</th><th>PIC</th><th>Type</th><th>Valid to</th><th>Status</th><th></th>
+        <th>Permit #</th><th>Type</th><th>Project</th><th>Location</th><th>Person in charge</th><th>Valid to</th><th>Status</th><th></th>
       </tr></thead>
       <tbody>
-        ${list.map(p => `
+        ${list.map(p => {
+          const t = PermitTypes.typeOf(p);
+          const s = PermitTypes.statusOf(p);
+          const id = encodeURIComponent(p.id);
+          return `
           <tr>
-            <td class="num">${p.permitNumber}</td>
-            <td>${p.projectNumber || '—'}</td>
-            <td>${p.location || '—'}</td>
-            <td>${p.personInCharge || '—'}</td>
-            <td>${p.isCriticalLift ? '<span class="badge badge-warn"><span class="badge-dot"></span>Critical</span>' : 'Non-critical'}</td>
-            <td class="num">${p.validTo ? fmtDate(p.validTo) : '—'}</td>
-            <td>${statusBadge(statusOf(p))}</td>
+            <td class="num nowrap">${esc(p.permitNumber || '—')}</td>
+            <td>${esc(t.label)}${t.key === 'lifting' && p.isCriticalLift ? ' <span class="badge badge-warn"><span class="badge-dot"></span>Critical lift</span>' : ''}</td>
+            <td>${esc(p.projectNumber || '—')}</td>
+            <td>${esc(p.location || '—')}</td>
+            <td>${esc(p.personInCharge || '—')}</td>
+            <td class="num nowrap">${p.validTo ? esc(fmtDate(p.validTo)) : '—'}</td>
+            <td>${statusBadge(s)}</td>
             <td style="white-space:nowrap;">
-              <a class="btn btn-sm" href="permit.html?id=${p.id}&mode=view">View</a>
-              <a class="btn btn-sm" href="permit.html?id=${p.id}">Edit</a>
-              <button class="btn btn-sm btn-danger" onclick="removePermit('${p.id}')">Delete</button>
+              <a class="btn btn-sm" href="permit.html?id=${id}&amp;mode=view">View</a>
+              ${s === 'closed' ? '' : `<a class="btn btn-sm" href="permit.html?id=${id}">Edit</a>`}
+              <button class="btn btn-sm btn-danger" data-delete="${esc(p.id)}">Delete</button>
             </td>
-          </tr>
-        `).join('')}
+          </tr>`;
+        }).join('')}
       </tbody>
-    </table>
+    </table></div>
   `;
+  wrap.querySelectorAll('[data-delete]').forEach(btn => btn.addEventListener('click', () => removePermit(btn.dataset.delete)));
 }
 
 function removePermit(id) {
-  if (!confirm('Delete this permit? This cannot be undone.')) return;
+  if (!confirm('Delete this permit? This cannot be undone.\n\nADOSH-SF CoP 21.0 asks for permit records to be kept for at least 1 year. Export a backup first if you still need it.')) return;
   DB.deletePermit(id);
   render();
 }
 
 document.getElementById('search').addEventListener('input', render);
+typeSel.addEventListener('change', render);
 document.getElementById('filterStatus').addEventListener('change', render);
 document.getElementById('filterType').addEventListener('change', render);
 render();

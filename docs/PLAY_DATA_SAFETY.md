@@ -62,7 +62,7 @@ ephemerally? Optional or required? Purposes?* Recommended answers:
 
 | Data type | Collected | Shared | Purpose(s) | Notes |
 |---|---|---|---|---|
-| **Personal info → Name** | Yes | No | App functionality | Assessor / issuer / approver / verifier / person-in-charge / contractor names entered on assessments and permits. |
+| **Personal info → Name** | Yes | No | App functionality | Assessor / issuer / approver / verifier / person-in-charge / contractor names entered on assessments and permits, and the names on permits to work (permit holder, work party, fire watcher, confined space entrants and standby person, gas tester, isolating authority, rescuers, the person who closed the permit). |
 | **Personal info → Email address** | Yes | No | App functionality; Account management | Used as the cloud account login identifier (Firebase Auth). |
 | **Personal info → User IDs** | Yes | No | App functionality; Account management | Firebase Auth UID; ties records to the account. |
 | **Personal info → Other info** | Yes | No | App functionality | Free-text notes and on-screen **signatures** captured for permit sign-off. Declare here (there is no dedicated "signature" type) and describe it in the field. |

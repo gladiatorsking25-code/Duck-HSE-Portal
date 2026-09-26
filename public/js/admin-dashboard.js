@@ -189,7 +189,7 @@
 
     const items = [
       { label: 'Lift assessments', value: assessments.length, foot: assessments.filter((a) => a.isValid).length + ' allowed' },
-      { label: 'Permits on file', value: permits.length, foot: permits.filter((p) => new Date(p.validTo) >= new Date()).length + ' still valid' },
+      { label: 'Permits on file', value: permits.length, foot: permits.filter((p) => (typeof PermitTypes !== 'undefined') ? PermitTypes.statusOf(p) === 'active' : new Date(p.validTo) >= new Date()).length + ' active' },
       { label: 'Equipment checklists', value: checklists.length, foot: 'saved in this browser' },
       { label: 'Crane models', value: (typeof CRANE_DATA !== 'undefined') ? Object.keys(CRANE_DATA).length : 0, foot: 'configured in the fleet' }
     ];

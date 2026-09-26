@@ -1,14 +1,95 @@
 # Duck HSE Portal — Web App
 
-An HSE portal for teams: projects and tracked actions, equipment inspections, HSE
-audit evidence packs, and lifting operations (crane lift assessments and lifting
-permits). It started as a browser rebuild of a WinForms crane lifting assessment tool.
+An HSE portal for teams: projects and tracked actions, permits to work, equipment
+inspections, HSE audit evidence packs, and lifting operations (crane lift assessments
+and lifting permits). It started as a browser rebuild of a WinForms crane lifting
+assessment tool.
 No install; runs in any modern browser on phone, tablet or desktop.
 
 > Supports, never replaces, competent-person decisions.
 > Developed by **Sabir Amin** — sabiriis143@gmail.com.
 
 ## Changelog
+
+- **Permits to work for all high-risk work (v1.11.0)**
+  - **Seven permit types.** Lifting (as before), hot work, confined space entry,
+    work at height, excavation, energy isolation (lock-out, tag-out) and general
+    work. **New permit** opens a chooser; each type has its own work details,
+    precautions, close-out checks and number series (`LP-`, `HW-`, `CSE-`, `WAH-`,
+    `EXC-`, `ISO-`, `GW-` + year + sequence). Numbers are given when the permit is
+    saved and continue from the highest number already on file, so a new or wiped
+    device never reuses one.
+  - **Content from the ADOSH-SF codes of practice**: CoP 21.0 (permit to work),
+    27.0 (confined spaces), 28.0 (hot work), 23.0 (working at heights), 29.0
+    (excavation), 24.0 (lock-out, tag-out) and 34.0 (lifting). A permit can be
+    valid for at most 12 hours. **A competent person must check the precautions
+    and limits against the site's own permit system before the portal is used on
+    a live site.**
+  - **Rules that stop a permit being issued**, for example:
+    - Gas tests record the time, where the reading was taken, the tester and the
+      detector. Oxygen must be 19.5–23.5 % and flammable gas below 5 % LEL;
+      confined spaces and excavations also test H₂S (no more than 1 ppm) and CO
+      (no more than 25 ppm). The latest reading at every test point (top, middle,
+      bottom...) must pass, so re-testing one point cannot clear another, and it
+      must be no more than 2 hours before the permit starts. Every reading needs its
+      time, and times in the future or after the permit ends are refused. Confined space
+      entry always needs a test; hot work needs one in hazardous areas, confined
+      spaces, near live plant and on containers; excavations when they could be a
+      confined space or are over 1.2 m deep near a gas source; general work when
+      opening lines, chemical cleaning or in a hazardous area.
+    - The issuer and the permit holder, the fire watcher and the welders, and the
+      standby person and the entrants must be different people.
+    - Hot work cannot go ahead with sprinklers impaired, and cannot be closed until
+      the fire watch has run for at least 1 hour after the work ended and any
+      isolated detectors are restored.
+    - Confined spaces list the other gases to test for when the space held fuel,
+      chemicals, sewage or inert gas, or when oxygen is below 20.5 %, and need heat
+      controls and a time limit at 30 °C or more inside.
+    - Work at height: for falls of 2 m or more, guardrails or nets, or a recorded
+      reason why not; fall arrest needs anchors, named rescuers and enough clear
+      distance below for the lanyard or SRL; ladders above 2 m need a harness;
+      MEWPs, cradles and rope access need a wind limit and reading, and work stops
+      above the limit.
+    - Excavations deeper than 1.2 m need support (unsupported only in rock with a
+      written assessment); battered sides are checked against the safe slope for
+      the ground type (CoP 29.0 Table 1), using the flattest slope for fill or
+      unknown ground, unless an engineer's design is recorded.
+    - Energy isolation lists each isolation point with its lock number, who
+      isolated it and proof of zero energy; stop buttons, interlocks and drives are
+      refused as isolation; live work is refused; electrical isolation records the
+      authorised electrician, system voltage and tester.
+    - Heat stress controls become required at a forecast 35 °C or more (CoP 11.0)
+      for work at height, excavation and general work.
+    - Precautions that only apply sometimes (flashback arrestors for gas cutting,
+      a proven voltage tester for electrical isolation, tower checks for mobile
+      towers) become required when they apply.
+  - **Printing.** Gas and isolation tables fit the printed page.
+  - **Terms and Privacy** mention the permit records, so everyone is asked to
+    accept them again once.
+  - **Records.** Deleting a permit warns that CoP 21.0 asks for permit records to
+    be kept for at least 1 year.
+  - **Re-tests during the work.** A failed gas re-test on an issued permit is saved
+    and suspends the permit, with the readings as the reason, so the record is
+    kept and work stops.
+  - **Editing older permits.** Rules added in this version (the 12-hour limit, the
+    issuer being someone other than the permit holder) apply only when those
+    values change, so permits saved before v1.11.0 can still be updated.
+  - **Close-out.** Closing a permit records who closed it, when, and the
+    close-out checks; closed permits are read-only. The verifier's name and
+    signature entered on the form are kept; any other unsaved change must be saved
+    first, so closing never throws it away. Permits linked to a project
+    update the tracked item (suspended = open, closed or expired = closed).
+  - **Permit list and dashboard.** The list filters by type and status (now
+    including closed). The dashboard counts active permits, high-risk permits
+    and critical lifts, and shows permits coming due with their type.
+  - **Existing lifting permits keep working.** Permits saved before this version
+    are read as lifting permits, with the same checklist and critical-lift rules.
+  - **Fixes.** Permit fields, status banners and the list are escaped before
+    display. New permits get sensible default times again.
+  - **Tests.** 33 unit tests for the permit rules (`test/permit-types.test.mjs`);
+    the browser test issues a confined space permit (refused on low oxygen),
+    tracks it on a project, prints it, suspends it on a failed re-test and closes
+    it, and checks the hot work fire watch.
 
 - **For all of HSE, and a safer "Delete my data" (v1.10.0)**
   - **Erasing data needs your password.** The Delete my data page is still public
@@ -488,6 +569,10 @@ replace that determination.
   into a pre-filled full assessment.
 - **Assessment history** — searchable, filterable log of every assessment, exportable
   to CSV, with a "View" button to open its saved lift diagrams.
+- **Permits to work** — hot work, confined space entry, work at height, excavation,
+  energy isolation (LOTO), general work and lifting permits, each with its own work
+  details, precautions, gas tests or isolation points where they apply, close-out
+  checks and number series. The rules for each type live in `js/permit-types.js`.
 - **Lifting permits** — a full permit-to-work form: validity window, pre-start
   checklist, critical-lift flagging (which requires a linked, passing assessment and an
   approver signature before it can be saved), the linked assessment's lift diagrams
@@ -495,7 +580,8 @@ replace that determination.
   capture for issuer/approver/verifier. Permits can be viewed read-only, edited,
   suspended with a reason, or printed / saved as PDF via the browser's print dialog
   (the lift diagrams print too).
-- **All permits** — searchable list with active/expired/suspended status and lift type.
+- **Permits to work list** — searchable list filtered by permit type and by
+  active/expired/suspended/closed status, with lift type for lifting permits.
 - **Fleet & backup** — read-only summary of the cranes on file, plus JSON export/import
   so you can back up or move your records between browsers or machines.
 
@@ -550,8 +636,8 @@ login.html             Sign-in screen (see Signing in above)
 assessment.html        New lift assessment, lift diagram, briefing & training
 crane-selector.html    Cost-efficient crane recommendation tool
 history.html           Assessment history
-permit.html            New / view / edit lifting permit
-permits.html           All permits list
+permit.html            New / view / edit / close a permit to work (every type)
+permits.html           Permits to work list
 settings.html          Fleet reference + backup/restore
 css/styles.css         Shared design system
 js/auth.js              Client-side-only sign-in gate — NOT real security
@@ -564,6 +650,7 @@ js/crane-selector.js   Crane recommendation engine used by crane-selector.html
 js/nav.js              Shared sidebar + disclaimer banner + footer + sign-out
 js/signature-pad.js    Canvas-based signature capture
 js/assessment.js       Assessment page logic
+js/permit-types.js     Permit types: fields, precautions, gas limits, close-out, rules — EDIT THIS
 js/permit.js           Permit page logic
 js/consent.js          One-time Terms/Privacy acceptance gate (additive, sits above auth.js)
 js/assessment-detail.js Full saved-assessment record renderer (shared; used by history.html)
@@ -648,7 +735,11 @@ reused.
 - **Add a crane model**: add a new entry to `CRANE_DATA` in `js/crane-data.js`
   following the existing shape — no other file needs to change; the crane selector
   and lift diagrams pick it up automatically.
-- **Add a permit checklist item**: add `{ key, label }` to `CHECKLIST_ITEMS` in `js/permit.js`.
+- **Add a permit precaution or close-out check**: add `{ key, label, required }` to the
+  type's `checks` or `closeout` list in `js/permit-types.js` (lifting checks are in
+  `LIFTING_CHECKS`). Use a new `key`; saved permits store answers by key. To add a
+  permit type, add an entry to `TYPES` with a new `key` and `prefix`.
+  `test/permit-types.test.mjs` checks every type, so run `npm run test:unit` after.
 - **Add an equipment-checklist item**: append to the relevant section's `items` in
   `js/checklist-data.js` with a unique `id` and all four translations. **Never reuse an
   `id` for a different question** — saved records store answers keyed by id, so a reused
