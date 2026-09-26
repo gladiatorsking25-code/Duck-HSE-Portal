@@ -462,6 +462,24 @@ test('backups stop at the portal ceiling, and trial accounts stop at 80% of it',
   assert.equal((await usage('driveTotals', 'all')).usedBytes, 1048576 - 10);
 });
 
+test('the nightly backup of a project owned by an account on the trial stops at 80% of the portal', { skip }, async () => {
+  const { pd, clock, calls } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await makeProject('p1', { ownerUid: 'own' });
+  await makeProject('p2', { ownerUid: 'pay', members: { pay: 'owner' }, memberUids: ['pay'] });
+  await paying('pay', clock);
+  // Past 80% of 1 MB (838,861 bytes), well short of the ceiling.
+  await db.doc('driveTotals/all').set({ usedBytes: 900000, fileCount: 1 });
+  const tally = await pd.dailyBackups();
+  assert.deepEqual({ done: tally.done, failed: tally.failed }, { done: 1, failed: 1 });
+  assert.equal(calls.upload.length, 1);
+  assert.equal((await db.collection('projects/p1/backups').get()).size, 0);
+  assert.equal((await db.collection('projects/p2/backups').get()).size, 1);
+  // Once the owner pays, the project is backed up again.
+  await paying('own', clock);
+  assert.equal((await pd.runBackup('p1', { kind: 'auto' })).skipped, false);
+  assert.equal((await db.collection('projects/p1/backups').get()).size, 1);
+});
+
 test('old backups go to the trash and give their space back 30 days later', { skip }, async () => {
   const { pd, clock, calls, base } = setup();
   await makeProject('p1');

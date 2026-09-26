@@ -113,10 +113,11 @@ minutes.
   counted.
 - **The last 20% is kept for paying accounts.** An account that is only on the
   trial cannot add files, back up or restore once the portal is 80% full
-  (80 GB of the default 100 GB). It is told "File storage for trial accounts is
-  full right now", and the function log says "Trial accounts' share of the
-  portal file space is full". Paying accounts, and accounts you grant access
-  to, can use the whole limit.
+  (80 GB of the default 100 GB), and the projects it owns are no longer backed
+  up nightly. It is told "File storage for trial accounts is full right now",
+  and the function log says "Trial accounts' share of the portal file space is
+  full". Paying accounts, and accounts you grant access to, can use the whole
+  limit.
 - **Allowed types:** PDF; photos (JPG, PNG, WebP, GIF, HEIC); Word, Excel,
   PowerPoint and OpenDocument files; Outlook `.msg` and `.eml` emails; RTF, CSV
   and text; DWG and DXF drawings. Web pages, scripts, programs and archives are
@@ -160,6 +161,6 @@ Console → **Functions → Logs**.
 | "During the free trial each person can add up to …" | The account is only on the trial and reached `DRIVE_TRIAL_QUOTA_MB`. It gets the full space once it subscribes or you grant access. |
 | "The portal's file storage is full" | All projects together reached `DRIVE_TOTAL_QUOTA_MB`. Check the shared drive's free space, then raise the limit and redeploy the functions, or ask customers to delete files they no longer need. |
 | "Verify your email address before adding files" (or before backing up or restoring) | The person has not clicked the link in the verification email yet. After clicking it, they open the Projects page again. |
-| "File storage for trial accounts is full right now" | The portal is 80% full (`DRIVE_TOTAL_QUOTA_MB`), so accounts only on the trial cannot add files or back up. Paying accounts are not affected. Raise the limit if the shared drive has room. |
+| "File storage for trial accounts is full right now" | The portal is 80% full (`DRIVE_TOTAL_QUOTA_MB`), so accounts only on the trial cannot add files or back up, and projects they own are not backed up nightly. Paying accounts are not affected. Raise the limit if the shared drive has room. |
 | "This project has been backed up or restored 10 times today" | The daily limit on **Back up now** and **Restore items** for that project. It resets at 04:00 UAE time. Nightly backups still run. |
 | "This project is too large to back up here", or the same in the nightly log | It has more than 3,000 tracked items or 5,000 files. Archive finished work into a new project. |

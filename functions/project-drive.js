@@ -312,7 +312,8 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
     });
     const json = Buffer.from(JSON.stringify(backup));
     const name = F.backupName(project, at, kind);
-    const release = await reserveBackup(projectId, json.length, uid);
+    // The nightly run has no caller, so the project's owner stands in for one.
+    const release = await reserveBackup(projectId, json.length, uid || project.ownerUid || '');
     let stored;
     try {
       stored = await drive.upload({
@@ -343,8 +344,10 @@ function makeProjectDrive({ db, FieldValue, Timestamp, drive, env, sleep, now: c
 
   // Backups use the shared drive too, so they count towards the project's and
   // the portal's space (never a person's) and, like uploads, reserve it before
-  // uploading. The nightly run has no caller; a manual backup or restore point
-  // by an account only on the trial must leave the paying accounts' share.
+  // uploading. A manual backup or restore point by an account only on the
+  // trial, and a nightly backup of a project whose owner is only on the trial,
+  // must leave the paying accounts' share: otherwise free sign-ups could fill
+  // it with nightly backups of large projects of their own.
   // Returns a function that gives the space back.
   async function reserveBackup(projectId, size, uid) {
     await ensureTotals();
