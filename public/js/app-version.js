@@ -9,7 +9,7 @@
 
 const APP_VERSION = '1.13.0';
 const APP_VERSION_CODE = 20;
-const APP_RELEASE_DATE = '2026-09-24';
+const APP_RELEASE_DATE = '2026-09-25';
 
 // Shown in the Terms/Privacy pages and on the About page so a user can tell
 // support exactly which build they are on.

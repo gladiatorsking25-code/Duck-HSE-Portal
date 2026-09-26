@@ -144,19 +144,40 @@ test('an SDK file missing from the offline copy is fetched and then kept', async
   assert.equal(await sw.store.get(SDK).text(), 'checked copy');
 });
 
-test('without CORS the SDK is still kept, as the no-cors copy a <script> tag uses', async () => {
+test('without CORS the SDK is not kept, since an unchecked (opaque) copy may be an error page', async () => {
+  // A block page or an edge error without CORS headers: the checked download
+  // throws, and the no-cors copy the page's <script> tag gets cannot be read.
   const sw = loadSw(async (req, init) => {
     if (init.mode === 'cors') throw new TypeError('CORS refused');
     return opaque();
   });
-  await dispatch(sw, SDK);
-  assert.equal(sw.store.get(SDK).type, 'opaque');
+  const res = await dispatch(sw, SDK);
+  assert.equal(res.type, 'opaque', 'the page still gets its answer');
+  assert.equal(sw.store.has(SDK), false);
+  assert.ok(sw.calls.every((c) => c.init.mode !== 'no-cors'), 'no unchecked download for the offline copy');
+
+  let installing = null;
+  sw.listeners.install({ waitUntil: (p) => { installing = p; } });
+  await installing;
+  assert.equal(sw.store.has(SDK), false, 'nor at install');
 });
 
 test("a failed SDK download is not kept, so it cannot stand in for the real file", async () => {
-  const sw = loadSw(async () => new Response('not found', { status: 404 }));
+  let status = 503;
+  const sw = loadSw(async (req, init) => (init.mode === 'cors' && status === 200
+    ? new Response('sdk') : new Response('unavailable', { status })));
+  let installing = null;
+  sw.listeners.install({ waitUntil: (p) => { installing = p; } });
+  await installing;
+  assert.equal(sw.store.has(SDK), false, 'not at install');
   await dispatch(sw, SDK);
-  assert.equal(sw.store.has(SDK), false);
+  assert.equal(sw.store.has(SDK), false, 'not when the page asks for it');
+  // The next request goes back to the network, and a good copy is kept then.
+  status = 200;
+  const before = sw.calls.length;
+  await dispatch(sw, SDK);
+  assert.ok(sw.calls.length > before);
+  assert.equal(await sw.store.get(SDK).text(), 'sdk');
 });
 
 test('scripts and styles are checked with the server, not taken from the browser cache', async () => {
@@ -186,6 +207,38 @@ test('the CSP lets the audit viewer preview PDF, video and audio', () => {
   const p = csp();
   assert.ok(p['frame-src'].includes('blob:'));
   assert.deepEqual(p['media-src'], ["'self'", 'blob:']);
+});
+
+// The other sites the service worker downloads from itself, read from sw.js:
+// full https:// addresses, the hostnames it routes on, and host patterns in
+// its regular expressions such as fonts\.(googleapis|gstatic)\.com.
+function swHosts() {
+  const src = read('public/sw.js');
+  const hosts = new Set();
+  for (const m of src.matchAll(/https:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)+)/g)) hosts.add(m[1]);
+  for (const m of src.matchAll(/hostname === '([a-z0-9.-]+)'/g)) hosts.add(m[1]);
+  for (const m of src.matchAll(/([a-z0-9-]+)\\\.\(([a-z0-9|-]+)\)\\\.([a-z]+)/g)) {
+    for (const alt of m[2].split('|')) hosts.add(`${m[1]}.${alt}.${m[3]}`);
+  }
+  return [...hosts];
+}
+
+// Whether a CSP source list lets a page (or the worker) fetch from https://host.
+function cspAllows(sources, host) {
+  return sources.some((s) => {
+    const m = /^https:\/\/(\*\.)?([a-z0-9.-]+)$/.exec(s);
+    if (!m) return false;
+    return m[1] ? host.endsWith('.' + m[2]) : host === m[2];
+  });
+}
+
+test("the CSP's connect-src covers every other site the service worker downloads from", () => {
+  const hosts = swHosts();
+  for (const h of ['www.gstatic.com', 'fonts.googleapis.com', 'fonts.gstatic.com']) {
+    assert.ok(hosts.includes(h), `sw.js was read: ${h}`);
+  }
+  const connect = csp()['connect-src'];
+  for (const h of hosts) assert.ok(cspAllows(connect, h), h);
 });
 
 // Apache applies every matching FilesMatch block in order, so the last match wins.
