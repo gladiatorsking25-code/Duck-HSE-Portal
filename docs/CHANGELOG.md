@@ -9,6 +9,36 @@ runs from any browser, deployable free on GitHub Pages.
 
 ## Changelog
 
+- **Projects and teams (v1.8.0)**: new `projects.html` and `project.html`.
+  - **Projects are shared.** A project has an owner, and can have managers,
+    editors and viewers. People are invited by email. An invite only lands on an
+    account whose email address is **verified**, so nobody can claim an invite
+    by signing up with someone else's address first.
+  - **Tracked items** hold each project's work: actions, inspections,
+    observations, incidents, documents, meetings, plus linked permits, lift
+    assessments and equipment checklists. Each item has a status, priority, due
+    date and assignee. The dashboard shows open, in-progress, overdue and
+    recently closed counts, with filters and a CSV export (formula-safe).
+  - **Linking records.** The permit, assessment and checklist forms have a
+    "Track on project" picker. Saving creates or updates one item on that
+    project, so the team sees it without sharing the record itself.
+  - **Activity log** per project, append-only and stamped by the server clock.
+  - **Security.** Projects live in Firestore under `projects/{id}` with
+    `items` and `activity` subcollections. `firestore.rules` enforces roles,
+    validates every field, and blocks clients from changing membership (only
+    the `projectSetMember`, `projectRemoveMember` and `projectAcceptInvites`
+    Cloud Functions can). Writes to shared data need an active trial or
+    subscription, checked by the rules (`hasAccess()`), not just the page.
+    Lapsed members can still read. Projects are archived, never hard-deleted.
+  - **Fixes:** an admin "Revoke" now also ends a running trial (before, a
+    revoked account kept trial access). `isAdmin()` in the rules no longer
+    errors on accounts without a role. Cloud Functions import `FieldValue` from
+    `firebase-admin/firestore` (the old `admin.firestore.FieldValue` was
+    undefined at runtime). Elements with the `hidden` attribute are now always
+    hidden, and search/email/URL inputs pick up the standard input style.
+  - **Tests** in `test/`: Firestore rules (22), membership logic (10), and an
+    end-to-end browser run against the Firebase emulators (12 steps).
+
 - **HSE audit preparation for contractors and consultants (v1.7.0)**: new
   `audits.html` / `audit.html`. Builds an evidence checklist from **ADOSH-SF
   Technical Guideline 15** (Audit Non-Conformance, v4.0, July 2024) and the **TAQA WS

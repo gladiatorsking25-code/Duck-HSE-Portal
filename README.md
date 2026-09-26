@@ -13,6 +13,7 @@ and installs as an app (PWA / Android TWA).
 | `functions/` | Cloud Functions: trial on signup, purchase verification, admin actions | Firebase |
 | `firestore.rules` | The server-side security boundary for all data | Firebase |
 | `firebase.json` | Firebase deploy config | – |
+| `test/` | Rules, unit and end-to-end tests (Firebase emulators) | Your computer / CI |
 | `twa-manifest.json` | Android (Trusted Web Activity) build config | Bubblewrap |
 | `docs/` | Security model, Firebase setup, Play Store notes, changelog | – |
 
@@ -28,6 +29,25 @@ and installs as an app (PWA / Android TWA).
   the rule is simply: they never go in this repo.
 
 Full details: [`docs/SECURITY.md`](docs/SECURITY.md).
+
+## Projects and teams
+
+Each customer creates projects and invites their team by email as manager,
+editor or viewer. Projects hold tracked items (actions, inspections, incidents,
+linked permits, assessments and checklists) with status, priority, due date and
+assignee, plus an activity log. See `docs/CHANGELOG.md` (v1.8.0) for details.
+
+## Tests
+
+```
+cd test
+npm install
+npm test          # membership unit tests + Firestore rules tests (needs Java 11+)
+npm run test:e2e  # browser run against the auth/Firestore/Functions emulators
+```
+
+`test:e2e` uses Playwright; set `CHROMIUM_PATH` if Chromium isn't installed
+where Playwright expects it. `functions/` needs `npm install` first.
 
 ## Deploy
 

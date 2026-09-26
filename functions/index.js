@@ -26,6 +26,7 @@
 
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
+const { FieldValue } = require('firebase-admin/firestore');
 const { google } = require('googleapis');
 
 admin.initializeApp();
@@ -47,7 +48,7 @@ exports.onUserCreate = functions.auth.user().onCreate(async (user) => {
     subscriptionStatus: 'trial',
     trialStartedAt: now,
     trialEndsAt: now + TRIAL_DAYS * DAY_MS,
-    createdAt: admin.firestore.FieldValue.serverTimestamp()
+    createdAt: FieldValue.serverTimestamp()
   }, { merge: true });
 });
 
@@ -77,7 +78,7 @@ async function applyPurchaseToUser(uid, packageName, subscriptionId, purchaseTok
     subscriptionStatus: status,
     subscriptionId,
     subscriptionExpiryMillis: expiry,
-    subscriptionUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+    subscriptionUpdatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
   // Remember which user owns this token so RTDN events can find them later.
@@ -150,10 +151,10 @@ exports.adminSetSubscription = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'targetUid and action are required.');
   }
   const ref = db.collection('users').doc(targetUid);
-  const patch = { subscriptionUpdatedAt: admin.firestore.FieldValue.serverTimestamp() };
+  const patch = { subscriptionUpdatedAt: FieldValue.serverTimestamp() };
 
   if (action === 'grant') {
-    if (untilMillis === 'forever') { patch.compForever = true; patch.adminGrantUntil = admin.firestore.FieldValue.delete(); }
+    if (untilMillis === 'forever') { patch.compForever = true; patch.adminGrantUntil = FieldValue.delete(); }
     else {
       const until = Number(untilMillis);
       if (!until || until <= Date.now()) throw new functions.https.HttpsError('invalid-argument', 'untilMillis must be a future timestamp or "forever".');
@@ -161,9 +162,11 @@ exports.adminSetSubscription = functions.https.onCall(async (data, context) => {
     }
     patch.subscriptionStatus = 'comped';
   } else if (action === 'revoke') {
-    patch.adminGrantUntil = admin.firestore.FieldValue.delete();
+    patch.adminGrantUntil = FieldValue.delete();
     patch.compForever = false;
     patch.subscriptionStatus = 'revoked';
+    // End any running trial too, or the account would keep trial access.
+    patch.trialEndsAt = Date.now();
   } else if (action === 'extendTrial') {
     const until = Number(untilMillis);
     if (!until || until <= Date.now()) throw new functions.https.HttpsError('invalid-argument', 'untilMillis must be a future timestamp.');
@@ -174,7 +177,7 @@ exports.adminSetSubscription = functions.https.onCall(async (data, context) => {
 
   await ref.set(patch, { merge: true });
   await db.collection('adminLog').add({
-    at: admin.firestore.FieldValue.serverTimestamp(),
+    at: FieldValue.serverTimestamp(),
     byUid: adminUid, targetUid, action, untilMillis: untilMillis || null
   });
   const after = await ref.get();
@@ -194,7 +197,7 @@ exports.adminSetRole = functions.https.onCall(async (data, context) => {
   }
   await db.collection('users').doc(targetUid).set({ role }, { merge: true });
   await db.collection('adminLog').add({
-    at: admin.firestore.FieldValue.serverTimestamp(), byUid: adminUid, targetUid, action: 'setRole:' + role
+    at: FieldValue.serverTimestamp(), byUid: adminUid, targetUid, action: 'setRole:' + role
   });
   return { uid: targetUid, role };
 });
@@ -223,4 +226,149 @@ exports.adminListUsers = functions.https.onCall(async (data, context) => {
     };
   });
   return { users, count: users.length };
+});
+
+// -------------------------------------------------------------------------
+// Projects — team membership (see projects.js for the rules it enforces).
+// -------------------------------------------------------------------------
+const { planSetMember, planRemoveMember, normEmail, PlanError } = require('./projects');
+
+// Mirrors hasAccess() in firestore.rules and computeAccess() in the app.
+function userHasAccess(u, now = Date.now()) {
+  if (!u) return false;
+  if (u.role === 'admin') return true;
+  if (u.subscriptionStatus === 'revoked') return false;
+  return u.compForever === true
+    || Number(u.adminGrantUntil || 0) > now
+    || (['active', 'in_grace'].includes(u.subscriptionStatus) && Number(u.subscriptionExpiryMillis || 0) > now)
+    || Number(u.trialEndsAt || 0) > now;
+}
+
+async function assertSubscribed(context) {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign in.');
+  const snap = await db.collection('users').doc(context.auth.uid).get();
+  if (!userHasAccess(snap.data())) {
+    throw new functions.https.HttpsError('permission-denied', 'An active subscription is required to manage a team.');
+  }
+  return context.auth.uid;
+}
+
+function asHttpsError(err) {
+  if (err instanceof PlanError) return new functions.https.HttpsError(err.code, err.message);
+  if (err instanceof functions.https.HttpsError) return err;
+  console.error(err);
+  return new functions.https.HttpsError('internal', 'Something went wrong. Please try again.');
+}
+
+async function findUserByEmail(email) {
+  try {
+    const u = await admin.auth().getUserByEmail(email);
+    return { uid: u.uid, email, verified: !!u.emailVerified };
+  } catch (e) {
+    if (e.code === 'auth/user-not-found') return { uid: null, email, verified: false };
+    throw e;
+  }
+}
+
+function logActivity(tx, projectRef, uid, email, action, summary) {
+  tx.set(projectRef.collection('activity').doc(), {
+    at: FieldValue.serverTimestamp(), uid, email: email || '',
+    action, itemId: '', summary: String(summary).slice(0, 300)
+  });
+}
+
+// Invite someone by email, change their role, or hand over ownership.
+// data: { projectId, email, role }
+exports.projectSetMember = functions.https.onCall(async (data, context) => {
+  try {
+    const callerUid = await assertSubscribed(context);
+    const { projectId, role } = data || {};
+    const email = normEmail(data && data.email);
+    if (!projectId || typeof projectId !== 'string') throw new PlanError('invalid-argument', 'projectId is required.');
+    const target = await findUserByEmail(email);
+    const ref = db.collection('projects').doc(projectId);
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new PlanError('not-found', 'Project not found.');
+      const { patch, invite } = planSetMember(snap.data(), callerUid, target, role);
+      tx.update(ref, Object.assign({}, patch, {
+        updatedAt: FieldValue.serverTimestamp(), updatedBy: callerUid
+      }));
+      if (invite) {
+        tx.set(db.collection('projectInvites').doc(invite.email),
+          { invites: { [projectId]: invite.role } }, { merge: true });
+      }
+      logActivity(tx, ref, callerUid, context.auth.token.email,
+        'project.update', invite ? `Invited ${email} as ${role}` : `Set ${email} as ${role}`);
+      return { status: invite ? 'invited' : 'added' };
+    });
+  } catch (err) { throw asHttpsError(err); }
+});
+
+// Remove a member (data.uid) or cancel a pending invite (data.email).
+exports.projectRemoveMember = functions.https.onCall(async (data, context) => {
+  try {
+    if (!context.auth) throw new PlanError('unauthenticated', 'Sign in.');
+    const callerUid = context.auth.uid;
+    const { projectId, uid, email } = data || {};
+    if (!projectId || typeof projectId !== 'string') throw new PlanError('invalid-argument', 'projectId is required.');
+    const ref = db.collection('projects').doc(projectId);
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new PlanError('not-found', 'Project not found.');
+      const project = snap.data();
+      const plan = planRemoveMember(project, callerUid, { uid, email });
+      tx.update(ref, Object.assign({}, plan.patch, {
+        updatedAt: FieldValue.serverTimestamp(), updatedBy: callerUid
+      }));
+      if (plan.email) {
+        tx.set(db.collection('projectInvites').doc(plan.email),
+          { invites: { [projectId]: FieldValue.delete() } }, { merge: true });
+      }
+      const who = plan.email || (project.memberEmails || {})[uid] || 'a member';
+      logActivity(tx, ref, callerUid, context.auth.token.email, 'project.update',
+        plan.email ? `Cancelled the invite for ${who}` : (uid === callerUid ? `${who} left the project` : `Removed ${who}`));
+      return { status: 'removed' };
+    });
+  } catch (err) { throw asHttpsError(err); }
+});
+
+// Called by the app after sign-in: joins every project this (verified) email
+// address was invited to.
+exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
+  try {
+    if (!context.auth) throw new PlanError('unauthenticated', 'Sign in.');
+    if (!context.auth.token.email_verified) return { joined: [], needsVerification: true };
+    const uid = context.auth.uid;
+    const email = normEmail(context.auth.token.email);
+    const inviteRef = db.collection('projectInvites').doc(email);
+    const inviteSnap = await inviteRef.get();
+    const invites = (inviteSnap.exists && inviteSnap.data().invites) || {};
+    const joined = [];
+    for (const projectId of Object.keys(invites)) {
+      const ref = db.collection('projects').doc(projectId);
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists) return;
+        const p = snap.data();
+        // The project's own pending list is the source of truth: an invite
+        // that was cancelled there is ignored.
+        const invite = (p.pendingInvites || []).find((i) => i.email === email);
+        if (!invite || p.status === 'archived') return;
+        const members = Object.assign({}, p.members);
+        const memberEmails = Object.assign({}, p.memberEmails);
+        if (!members[uid]) members[uid] = invite.role;
+        memberEmails[uid] = email;
+        tx.update(ref, {
+          members, memberUids: Object.keys(members), memberEmails,
+          pendingInvites: p.pendingInvites.filter((i) => i.email !== email),
+          updatedAt: FieldValue.serverTimestamp(), updatedBy: uid
+        });
+        logActivity(tx, ref, uid, email, 'project.update', `${email} joined as ${invite.role}`);
+        joined.push(projectId);
+      });
+    }
+    if (inviteSnap.exists) await inviteRef.delete();
+    return { joined, needsVerification: false };
+  } catch (err) { throw asHttpsError(err); }
 });

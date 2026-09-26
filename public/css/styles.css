@@ -185,7 +185,8 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
 .field.full { grid-column: 1 / -1; }
 .field label { font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
 .field .hint { font-size: 11.5px; color: var(--ink-soft); }
-input[type=text], input[type=number], input[type=date], input[type=datetime-local], select, textarea {
+input[type=text], input[type=number], input[type=date], input[type=datetime-local],
+input[type=search], input[type=email], input[type=url], input[type=password], select, textarea {
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -293,6 +294,8 @@ canvas.sig-pad {
 /* `display: flex` above beats the browser's own [hidden] { display: none },
    so a modal markup-in-page with the hidden attribute would show on load. */
 .modal-backdrop[hidden] { display: none !important; }
+/* Same for buttons and anything else given a display rule: hidden means hidden. */
+[hidden] { display: none !important; }
 .modal { background: #fff; border-radius: var(--radius); width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto; }
 .modal-head { padding: 16px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
 .modal-body { padding: 20px 22px; }

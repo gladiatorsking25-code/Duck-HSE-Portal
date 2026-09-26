@@ -234,6 +234,18 @@ function loadForm() {
 }
 
 if (!isNew) loadForm();
+
+// "Track on project": offer the user's projects; picking one fills in the
+// project number when it's empty.
+if (typeof ProjectLink !== 'undefined') {
+  const projectSel = document.getElementById('projectLink');
+  ProjectLink.mount(projectSel, permit && permit.projectId);
+  projectSel.addEventListener('change', () => {
+    const opt = projectSel.selectedOptions[0];
+    const num = document.getElementById('projectNumber');
+    if (opt && opt.dataset.number && !num.value.trim()) num.value = opt.dataset.number;
+  });
+}
 else {
   document.getElementById('validFrom').value = toLocalInput(new Date().toISOString());
   document.getElementById('date').value = new Date().toISOString().slice(0,10);
@@ -259,8 +271,7 @@ document.getElementById('btnSuspend')?.addEventListener('click', () => {
   permit.ptwSuspendedBy = by;
   permit.suspensionReason = reason;
   DB.savePermit(permit);
-  alert('Permit suspended.');
-  location.reload();
+  syncPermitToProject(permit).then(() => { alert('Permit suspended.'); location.reload(); });
 });
 
 // ---- Validation (mirrors the original PermitValidator) ----
@@ -314,6 +325,7 @@ document.getElementById('btnSave').addEventListener('click', () => {
     approverSignature: sigApprover.toDataUrlSafe(),
     verifierSignature: sigVerifier.toDataUrlSafe(),
     status: permit.status || 'active',
+    projectId: document.getElementById('projectLink').value || null,
   };
   CHECKLIST_ITEMS.forEach(item => { data[item.key] = document.getElementById(`chk_${item.key}`).checked; });
 
@@ -327,7 +339,26 @@ document.getElementById('btnSave').addEventListener('click', () => {
   errEl.innerHTML = '';
   permit = data;
   DB.savePermit(permit);
-  location.href = `permit.html?id=${permit.id}&mode=view`;
+  syncPermitToProject(permit).then(() => { location.href = `permit.html?id=${permit.id}&mode=view`; });
 });
+
+// Mirror the permit onto its project's tracked items (see js/project-link.js).
+async function syncPermitToProject(p) {
+  if (!p.projectId || typeof ProjectLink === 'undefined') return;
+  const expired = p.validTo && new Date(p.validTo) < new Date();
+  const res = await ProjectLink.sync(p.projectId,
+    { kind: 'permit', id: p.id, label: `Permit ${p.permitNumber || p.id}` },
+    {
+      title: `Permit ${p.permitNumber || ''}: ${(p.workDescription || p.location || 'Lifting permit').slice(0, 150)}`,
+      status: p.status === 'suspended' ? 'open' : expired ? 'closed' : 'in_progress',
+      priority: p.status === 'suspended' ? 'high' : p.isCriticalLift ? 'critical' : 'medium',
+      dueDate: p.validTo ? p.validTo.slice(0, 10) : '',
+      location: p.location || '',
+      details: [p.isCriticalLift ? 'Critical lift.' : 'Non-critical lift.',
+                p.personInCharge ? `Person in charge: ${p.personInCharge}.` : '',
+                p.status === 'suspended' ? `Suspended by ${p.ptwSuspendedBy || '?'}: ${p.suspensionReason || ''}` : ''].filter(Boolean).join(' ')
+    });
+  if (!res.ok) alert('The permit was saved, but it could not be added to the project: ' + res.error);
+}
 
 document.getElementById('btnPrint').addEventListener('click', () => window.print());

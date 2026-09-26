@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/consent.js"></script>
+<script>requireConsent();</script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Projects · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="stylesheet" href="css/projects.css">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>Projects</h2>
+        <div class="crumb">Every project you work on, with your team</div>
+      </div>
+      <button class="btn btn-primary" type="button" id="newProjectBtn" disabled>+ New project</button>
+    </div>
+
+    <div class="content">
+      <div id="notice"></div>
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search name, number, client, location…" aria-label="Search projects">
+        <select id="filterStatus" aria-label="Filter by status">
+          <option value="current">Current (not archived)</option>
+          <option value="">All statuses</option>
+          <option value="planning">Planning</option>
+          <option value="active">Active</option>
+          <option value="on_hold">On hold</option>
+          <option value="closed">Closed</option>
+          <option value="archived">Archived</option>
+        </select>
+      </div>
+      <div id="projectList"><div class="card empty-state">Loading your projects…</div></div>
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="projectModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
+    <div class="modal-head"><h3 id="projectModalTitle" style="margin:0;">New project</h3><button class="close-x" type="button" data-close aria-label="Close">×</button></div>
+    <form class="modal-body" id="projectForm">
+      <div class="form-grid">
+        <div class="field full"><label for="pName">Project name *</label><input type="text" id="pName" maxlength="120" required></div>
+        <div class="field"><label for="pNumber">Project number</label><input type="text" id="pNumber" maxlength="60"></div>
+        <div class="field"><label for="pStatus">Status</label>
+          <select id="pStatus"><option value="planning">Planning</option><option value="active" selected>Active</option><option value="on_hold">On hold</option><option value="closed">Closed</option></select></div>
+        <div class="field"><label for="pClient">Client</label><input type="text" id="pClient" maxlength="120"></div>
+        <div class="field"><label for="pLocation">Location / site</label><input type="text" id="pLocation" maxlength="160"></div>
+        <div class="field"><label for="pStart">Start date</label><input type="date" id="pStart"></div>
+        <div class="field"><label for="pEnd">End date</label><input type="date" id="pEnd"></div>
+        <div class="field full"><label for="pDesc">Scope / notes</label><textarea id="pDesc" rows="3" maxlength="4000"></textarea></div>
+      </div>
+      <div id="projectFormError"></div>
+    </form>
+    <div class="modal-foot">
+      <button class="btn" type="button" data-close>Cancel</button>
+      <button class="btn btn-primary" type="submit" form="projectForm" id="projectSaveBtn">Create project</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/storage.js"></script>
+<script src="js/cloud-sync.js"></script>
+<script src="js/nav.js"></script>
+<script src="js/projects.js"></script>
+<script>
+renderSidebar('projects');
+renderFooter('app-footer');
+
+const $ = (id) => document.getElementById(id);
+const esc = Projects.esc;
+let allProjects = [];
+let openCounts = {};
+
+function banner(host, kind, text) {
+  host.innerHTML = '';
+  const d = document.createElement('div');
+  d.className = 'banner banner-' + kind;
+  d.style.marginBottom = '14px';
+  d.textContent = text;
+  host.appendChild(d);
+}
+
+function render() {
+  const q = $('search').value.trim().toLowerCase();
+  const st = $('filterStatus').value;
+  const list = allProjects.filter((p) => {
+    if (st === 'current' && p.status === 'archived') return false;
+    if (st && st !== 'current' && p.status !== st) return false;
+    if (q && !`${p.name} ${p.number} ${p.client} ${p.location}`.toLowerCase().includes(q)) return false;
+    return true;
+  }).sort((a, b) => Projects.millis(b.updatedAt) - Projects.millis(a.updatedAt));
+
+  const host = $('projectList');
+  if (!allProjects.length) {
+    host.innerHTML = `<div class="card empty-state"><div class="icon">📁</div>No projects yet. Create your first one to start tracking permits, inspections and actions with your team.</div>`;
+    return;
+  }
+  if (!list.length) { host.innerHTML = `<div class="card empty-state">No projects match these filters.</div>`; return; }
+  const uid = Projects.currentUser().uid;
+  host.innerHTML = '<div class="project-grid">' + list.map((p) => {
+    const members = (p.memberUids || []).length;
+    const role = Projects.ROLES[Projects.roleIn(p, uid)] || '';
+    return `<a class="card project-card" href="project.html?id=${encodeURIComponent(p.id)}">
+      <div class="pc-head">
+        <h3>${esc(p.name)}</h3>
+        <span class="pill pill-${esc(p.status)}">${esc(Projects.STATUS[p.status] || p.status)}</span>
+      </div>
+      <div class="pc-meta">${[p.number, p.client, p.location].filter(Boolean).map(esc).join(' · ') || '&nbsp;'}</div>
+      <div class="pc-foot">
+        <span><strong>${members}</strong> member${members === 1 ? '' : 's'}</span>
+        <span>You: ${esc(role)}</span>
+        ${p.endDate ? `<span>Ends ${esc(p.endDate)}</span>` : ''}
+      </div>
+    </a>`;
+  }).join('') + '</div>';
+}
+
+// ---- New project modal ------------------------------------------------------
+function openModal() { $('projectForm').reset(); $('projectFormError').innerHTML = ''; $('projectModal').hidden = false; $('pName').focus(); }
+function closeModal() { $('projectModal').hidden = true; }
+$('newProjectBtn').addEventListener('click', openModal);
+$('projectModal').addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target === $('projectModal')) closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('projectModal').hidden) closeModal(); });
+
+$('projectForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('projectSaveBtn');
+  btn.disabled = true;
+  try {
+    const id = await Projects.create({
+      name: $('pName').value, number: $('pNumber').value, status: $('pStatus').value,
+      client: $('pClient').value, location: $('pLocation').value,
+      startDate: $('pStart').value, endDate: $('pEnd').value, description: $('pDesc').value
+    });
+    location.href = 'project.html?id=' + encodeURIComponent(id);
+  } catch (err) {
+    banner($('projectFormError'), 'danger', err.code === 'permission-denied'
+      ? 'Your subscription is not active, so you cannot create projects. Subscribe to continue.'
+      : (err.message || 'Could not create the project.'));
+    btn.disabled = false;
+  }
+});
+
+$('search').addEventListener('input', render);
+$('filterStatus').addEventListener('change', render);
+
+// ---- Load --------------------------------------------------------------------
+Projects.ready().then(() => {
+  firebase.auth().onAuthStateChanged(async (user) => {
+    if (!user) return;
+    Projects.watchMine(user.uid, (list) => { allProjects = list; $('newProjectBtn').disabled = false; render(); },
+      () => banner($('notice'), 'danger', 'Could not load your projects. Check your connection and try again.'));
+    // Join any projects you were invited to (needs a verified email address).
+    // Someone who just clicked the verification link still holds a sign-in
+    // token that says "unverified" until it is refreshed, so check the token
+    // itself (not user.emailVerified, which the SDK may already have updated).
+    try {
+      const token = await user.getIdTokenResult();
+      if (!token.claims.email_verified) {
+        await user.reload();
+        if (firebase.auth().currentUser.emailVerified) await firebase.auth().currentUser.getIdToken(true);
+      }
+      const res = await Projects.acceptInvites();
+      if (res && res.needsVerification) {
+        const host = $('notice');
+        host.innerHTML = `<div class="banner banner-warn" style="margin-bottom:14px;"><div>Verify your email address to join projects you are invited to. <button class="btn btn-sm" type="button" id="verifyBtn">Send verification email</button></div></div>`;
+        $('verifyBtn').addEventListener('click', async () => {
+          try { await user.sendEmailVerification(); banner(host, 'ok', 'Verification email sent to ' + user.email + '. Open the link, then reload this page.'); }
+          catch (err) { banner(host, 'danger', err.message); }
+        });
+      } else if (res && res.joined && res.joined.length) {
+        banner($('notice'), 'ok', `You joined ${res.joined.length} project${res.joined.length === 1 ? '' : 's'} you were invited to.`);
+      }
+    } catch (err) { console.warn('Invite check skipped', err); }
+  });
+}).catch((err) => banner($('notice'), 'danger', err.message));
+</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

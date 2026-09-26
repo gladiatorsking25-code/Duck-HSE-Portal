@@ -3,6 +3,7 @@ function renderSidebar(active) {
   if (!el) return;
   const items = [
     { key: 'index', href: 'index.html', label: 'Dashboard', icon: 'grid' },
+    { key: 'projects', href: 'projects.html', label: 'Projects', icon: 'folder' },
     { key: 'assessment', href: 'assessment.html', label: 'New assessment', icon: 'gauge' },
     { key: 'selector', href: 'crane-selector.html', label: 'Crane selector', icon: 'search' },
     { key: 'history', href: 'history.html', label: 'Assessment history', icon: 'clock' },
@@ -18,6 +19,7 @@ function renderSidebar(active) {
   // another into the wrong section.
   const group = (keys) => keys.map((k) => items.find((i) => i.key === k)).filter(Boolean).map(navLink).join('');
   const icons = {
+    folder: '<path d="M3 6.5A1.5 1.5 0 014.5 5H9l2 2.5h8.5A1.5 1.5 0 0121 9v9.5a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 18.5z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/>',
     grid: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" stroke="currentColor" stroke-width="1.6" fill="none"/>',
     gauge: '<path d="M12 21a9 9 0 100-18 9 9 0 000 18z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 12l4-4M12 12v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
     search: '<circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M20 20l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
@@ -41,7 +43,7 @@ function renderSidebar(active) {
     </div>
     <nav class="nav">
       <div class="section-label">Operations</div>
-      ${group(['index', 'assessment', 'selector', 'history'])}
+      ${group(['index', 'projects', 'assessment', 'selector', 'history'])}
       <div class="section-label">Permits</div>
       ${group(['permit', 'permits'])}
       <div class="section-label">Equipment</div>

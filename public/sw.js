@@ -13,7 +13,7 @@
 // Bump CACHE_VERSION on every deployment (it must match APP_VERSION in
 // js/app-version.js — see the note there).
 
-const CACHE_VERSION = 'v1.7.1';
+const CACHE_VERSION = 'v1.8.0';
 const CACHE_NAME = `cla-${CACHE_VERSION}`;
 const OFFLINE_URL = 'offline.html';
 
@@ -37,6 +37,8 @@ const PRECACHE_URLS = [
   'history.html',
   'permit.html',
   'permits.html',
+  'projects.html',
+  'project.html',
   'settings.html',
   'terms.html',
   'privacy.html',
@@ -53,6 +55,7 @@ const PRECACHE_URLS = [
   'css/styles.css',
   'css/hse-dashboard.css',
   'css/audit.css',
+  'css/projects.css',
   'js/app-version.js',
   'js/consent.js',
   'js/crane-data.js',
@@ -64,6 +67,9 @@ const PRECACHE_URLS = [
   'js/crane-selector.js',
   'js/crane-visual.js',
   'js/permit.js',
+  'js/projects.js',
+  'js/project-page.js',
+  'js/project-link.js',
   'js/signature-pad.js',
   'js/pwa.js',
   'js/i18n.js',
