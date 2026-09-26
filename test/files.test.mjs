@@ -93,7 +93,7 @@ test('names of built-in object properties are not file types', () => {
 });
 
 test('limit messages say that deleted files still count for 30 days', () => {
-  refuses(() => upload('ed', { name: 'a.pdf' }, PDF, QUOTA), /deleted in the last 30 days/);
+  refuses(() => upload('ed', { name: 'a.pdf' }, PDF, QUOTA), /backups included.*deleted in the last 30 days/);
   assert.match(F.projectFilesMessage(), /5000 files.*30 days/);
   assert.match(F.userQuotaMessage(0, 10 * 1048576), /across your projects.*10 MB.*20000 files/);
 });
@@ -117,12 +117,16 @@ test('a free trial gets the small personal space; paying, a grant or the admin r
   assert.deepEqual(F.personalQuota({}, { userQuotaBytes: 1048576, trialQuotaBytes: 200 * 1048576 }, now), { bytes: 1048576, trial: false });
   assert.equal(F.DEFAULT_TRIAL_QUOTA_MB, 200);
   assert.equal(F.DEFAULT_TOTAL_QUOTA_MB, 102400);
+  assert.equal(F.TRIAL_TOTAL_SHARE, 0.8);
 });
 
 test('trial, portal-full and verify-email messages are plain and say what to do', () => {
   assert.match(F.trialQuotaMessage(150 * 1048576, 200 * 1048576), /free trial each person can add up to 200 MB of files, and you have added 150 MB.*30 days.*Subscribe to add more/);
-  assert.match(F.totalQuotaMessage(), /file storage is full.*portal owner/);
+  assert.match(F.totalQuotaMessage(), /file storage is full, so files cannot be added.*portal owner/);
+  assert.match(F.totalQuotaMessage('the project cannot be backed up'), /file storage is full, so the project cannot be backed up right now/);
+  assert.match(F.trialTotalMessage(), /File storage for trial accounts is full right now.*Subscribing lifts this limit/);
   assert.match(F.verifyEmailMessage(), /Verify your email address before adding files/);
+  assert.match(F.verifyEmailMessage('backing up a project'), /Verify your email address before backing up a project: open the link/);
 });
 
 test('a link to a tracked item must look like an item id', () => {

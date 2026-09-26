@@ -544,7 +544,9 @@ exports.projectFileDelete = functions.https.onCall(async (data, context) => {
 exports.projectBackupNow = functions.runWith(FILE_RUN).https.onCall(async (data, context) => {
   try {
     const uid = await assertSubscribed(context, 'back up a project');
-    return await projectDrive().backupNow({ uid, email: context.auth.token.email, projectId: (data || {}).projectId });
+    return await projectDrive().backupNow({
+      uid, email: context.auth.token.email, emailVerified: context.auth.token.email_verified === true, projectId: (data || {}).projectId
+    });
   } catch (err) { throw fileError(err); }
 });
 
@@ -558,7 +560,10 @@ exports.projectBackupDownload = functions.runWith(FILE_RUN).https.onCall(async (
 exports.projectRestoreItems = functions.runWith({ timeoutSeconds: 300, memory: '512MB' }).https.onCall(async (data, context) => {
   try {
     const uid = await assertSubscribed(context, 'restore a backup');
-    return await projectDrive().restoreItems({ uid, email: context.auth.token.email, projectId: (data || {}).projectId, backupId: (data || {}).backupId });
+    return await projectDrive().restoreItems({
+      uid, email: context.auth.token.email, emailVerified: context.auth.token.email_verified === true,
+      projectId: (data || {}).projectId, backupId: (data || {}).backupId
+    });
   } catch (err) { throw fileError(err); }
 });
 

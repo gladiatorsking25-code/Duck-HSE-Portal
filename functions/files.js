@@ -22,9 +22,13 @@ const DEFAULT_USER_QUOTA_MB = 10240;
 // While an account is only on the free trial (sign-ups are free), it gets a
 // small share of that.
 const DEFAULT_TRIAL_QUOTA_MB = 200;
-// Space every file added through the portal may use together (100 GB), so the
-// shared drive cannot be filled however many accounts there are.
+// Space that every file added through the portal and every project backup may
+// use together (100 GB), so the shared drive cannot be filled however many
+// accounts there are.
 const DEFAULT_TOTAL_QUOTA_MB = 102400;
+// Accounts only on the trial may fill just this share of it, so free sign-ups
+// can never take the space that paying accounts rely on.
+const TRIAL_TOTAL_SHARE = 0.8;
 const MAX_FILES_PER_PROJECT = 5000;
 const MAX_FILES_PER_USER = 20000;
 // Deleted files stay in the shared drive's trash for 30 days and keep using
@@ -104,7 +108,7 @@ function matchesMagic(type, buf) {
 }
 
 function quotaMessage(used, quotaBytes) {
-  return `This project has used ${fmtMB(used)} of its ${fmtMB(quotaBytes)} of file space. Files deleted in the last 30 days still count while they are in the Drive trash. Ask the portal owner if you need more space.`;
+  return `This project has used ${fmtMB(used)} of its ${fmtMB(quotaBytes)} of file space, its backups included. Files deleted in the last 30 days still count while they are in the Drive trash. Ask the portal owner if you need more space.`;
 }
 function projectFilesMessage() {
   return `This project has reached ${MAX_FILES_PER_PROJECT} files (files deleted in the last 30 days still count). Ask the portal owner if you need more.`;
@@ -116,11 +120,14 @@ function userQuotaMessage(used, quotaBytes) {
 function trialQuotaMessage(used, quotaBytes) {
   return `During the free trial each person can add up to ${fmtMB(quotaBytes)} of files, and you have added ${fmtMB(used)} (files deleted in the last 30 days still count). Subscribe to add more.`;
 }
-function totalQuotaMessage() {
-  return 'The portal\'s file storage is full, so files cannot be added right now. Please let the portal owner know.';
+function totalQuotaMessage(what = 'files cannot be added') {
+  return `The portal's file storage is full, so ${what} right now. Please let the portal owner know.`;
 }
-function verifyEmailMessage() {
-  return 'Verify your email address before adding files: open the link in the email we sent you, then open the Projects page again (it can send a new link).';
+function trialTotalMessage() {
+  return 'File storage for trial accounts is full right now. Subscribing lifts this limit.';
+}
+function verifyEmailMessage(what = 'adding files') {
+  return `Verify your email address before ${what}: open the link in the email we sent you, then open the Projects page again (it can send a new link).`;
 }
 
 // Does this account pay (or have an admin grant, or the admin role)? Mirrors
@@ -323,9 +330,9 @@ function planRestore(backup, projectId, currentItemIds) {
 
 module.exports = {
   MAX_FILE_BYTES, DEFAULT_QUOTA_MB, DEFAULT_USER_QUOTA_MB, DEFAULT_TRIAL_QUOTA_MB, DEFAULT_TOTAL_QUOTA_MB,
-  MAX_FILES_PER_PROJECT, MAX_FILES_PER_USER, TRASH_HOLD_MS,
+  TRIAL_TOTAL_SHARE, MAX_FILES_PER_PROJECT, MAX_FILES_PER_USER, TRASH_HOLD_MS,
   FILE_TYPES, CATEGORIES, KEEP, MAX_BACKUP_ITEMS, MAX_BACKUP_FILES, BACKUP_FORMAT, BACKUP_VERSION,
   FileError, cleanName, planUpload, quotaMessage, projectFilesMessage, userQuotaMessage, trialQuotaMessage,
-  totalQuotaMessage, verifyEmailMessage, personalQuota, canDeleteFile, matchesMagic,
+  totalQuotaMessage, trialTotalMessage, verifyEmailMessage, personalQuota, canDeleteFile, matchesMagic,
   atLeast, roleOf, fmtMB, toJson, fromJson, fingerprintOf, buildBackup, backupName, backupsToPrune, planRestore
 };
