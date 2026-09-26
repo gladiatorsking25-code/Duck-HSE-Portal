@@ -291,6 +291,18 @@ test('the first account to sign in adopts the records already on the device', as
   assert.equal(await b.DeviceData.claim('alice'), 'same');
 });
 
+test('on a nearly full device the marks never stop the first account adopting it', async () => {
+  const b = browser();
+  seed(b, 'old');
+  // Room for the owner keys, but not for them and the marks as well.
+  b.ls.setQuota(b.ls.used() + 'cla_data_uidalice'.length + 'cla_data_legacy_uidalice'.length + 10);
+  assert.equal(await b.DeviceData.claim('alice'), 'adopted');
+  assert.equal(b.ls.getItem('cla_data_uid'), 'alice');
+  assert.equal(b.ls.getItem('cla_data_legacy_uid'), 'alice');
+  same(b.DB.getPermits().map((p) => p.id), ['P-old'], 'the records are all still here');
+  assert.equal(await b.DeviceData.claim('alice'), 'same');
+});
+
 test('another account signing in parks the records and gets them back later, untouched', async () => {
   const b = browser();
   seed(b, 'alice');
@@ -335,10 +347,15 @@ test('if the records cannot be parked, nothing moves and they stay hidden', asyn
   assert.equal(await b.DeviceData.claim('alice'), 'same');
   assert.equal(b.ls.getItem('cla_data_swap'), null);
   same(b.DB.getPermits().map((p) => p.id), ['P-alice']);
-  // Another account's sign-in starts again from the marker once it can.
+  // Another account's sign-in starts again from the marker once it can, and
+  // from the start its pages open its own databases, not Bob's.
   assert.equal(await b.DeviceData.claim('bob'), 'failed');
+  assert.equal(b.DeviceData.idbName('cla_audit_store_v1'), 'cla_audit_store_v1:bob');
   b.idb.failWrites = false;
-  assert.equal(await b.DeviceData.claim('carol'), 'switched');
+  b.ctx.navigator.locks = { request: (name, fn) => tick().then(fn) };   // the lock comes a moment later
+  const carol = b.DeviceData.claim('carol');
+  assert.equal(b.DeviceData.idbName('cla_audit_store_v1'), 'cla_audit_store_v1:carol');
+  assert.equal(await carol, 'switched');
   assert.equal(b.ls.getItem('cla_data_uid'), 'carol');
   same(b.DB.getPermits(), []);
   assert.equal(await b.DeviceData.claim('alice'), 'switched');
@@ -790,4 +807,72 @@ test('the photo store deletes the queued photos when it opens, unless the checkl
   await settle();
   same([...idb.data.keys()], ['ph2', 'ph3'], 'only the deleted checklist\'s photos go');
   assert.equal(ls.getItem('cla_cert_purge'), null, 'and the queue is empty');
+});
+
+// ---- project-link.js: linked project items are never created from the offline copy ----
+
+// Projects and ProjectLink with a scripted Firestore holding one project's
+// items. `getError` makes the item lookup fail as the SDK does offline.
+function projectLinkBrowser({ online = true, existing = null, getError = null } = {}) {
+  const calls = [];
+  const items = {
+    where() { return items; },
+    limit() { return items; },
+    async get(options) {
+      calls.push({ get: clone(options) });
+      if (getError) throw getError;
+      return existing ? { empty: false, docs: [{ id: existing.id, data: () => clone(existing) }] } : { empty: true, docs: [] };
+    },
+    async add(data) { calls.push({ add: clone(data) }); return { id: 'I-new' }; },
+    doc(id) {
+      return {
+        get: async () => ({ data: () => clone(existing) }),
+        update: async (data) => { calls.push({ update: id, data: clone(data) }); }
+      };
+    }
+  };
+  const activity = { add: async () => ({ id: 'act' }) };
+  const firestore = () => ({ collection: () => ({ doc: () => ({ collection: (n) => (n === 'items' ? items : activity) }) }) });
+  firestore.FieldValue = { serverTimestamp: () => 'now' };
+  const ctx = {
+    console: { log() {}, warn() {}, error() {} }, clearTimeout,
+    setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; },   // ProjectLink's 10 s limit
+    navigator: { onLine: online },
+    FIREBASE_READY: true, firebaseReadyPromise: Promise.resolve(),
+    firebase: { firestore, auth: () => ({ currentUser: { uid: 'u1', email: 'u1@example.com' } }) }
+  };
+  vm.createContext(ctx);
+  ['projects.js', 'project-link.js'].forEach((f) => vm.runInContext(source(f), ctx, { filename: f }));
+  return { ctx, calls, ProjectLink: vm.runInContext('ProjectLink', ctx) };
+}
+
+test('a linked record looks its project item up on the server, and offline adds nothing', async () => {
+  const ref = { kind: 'permit', id: 'P-1', label: 'Hot work permit HW-1' };
+  const input = { title: 'Hot work permit HW-1: welding', status: 'in_progress' };
+
+  let b = projectLinkBrowser();
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: true });
+  same(b.calls[0], { get: { source: 'server' } }, 'never decided from the offline copy');
+  assert.equal(b.calls[1].add.title, input.title);
+
+  b = projectLinkBrowser({ existing: { id: 'I-1', ref, title: 'old', status: 'open' } });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: true });
+  assert.equal(b.calls[1].update, 'I-1', 'the item already there is updated');
+  assert.ok(!b.calls.some((c) => c.add));
+
+  // Offline: nothing is looked up or queued, and the page is told why.
+  b = projectLinkBrowser({ online: false });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: false, offline: true, error: 'you are offline' });
+  same(b.calls, []);
+
+  // The connection drops without the browser noticing: the server lookup
+  // fails, and still nothing is added.
+  const err = Object.assign(new Error('Failed to get documents from server.'), { code: 'unavailable' });
+  b = projectLinkBrowser({ getError: err });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: false, offline: true, error: 'you are offline' });
+  assert.ok(!b.calls.some((c) => c.add || c.update));
+
+  // Other errors are passed on as they are.
+  b = projectLinkBrowser({ getError: Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }) });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: false, error: 'Missing or insufficient permissions.' });
 });

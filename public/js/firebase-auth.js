@@ -205,8 +205,10 @@ const DeviceData = (function () {
   // Records on a device with no recorded owner were made before accounts kept
   // their records apart. Some were deleted on another device since, and some
   // may be another person's, so they stay on this device only until someone
-  // edits one (js/cloud-sync.js needsPush; DB._stamp clears the mark). A list
-  // that cannot be rewritten (storage full) is left as it is.
+  // edits one (js/cloud-sync.js needsPush; DB._stamp clears the mark). Records
+  // merged back from the account's own stash are marked too: any of them the
+  // account no longer has was deleted from it. Pending records are not. A
+  // list that cannot be rewritten (storage full) is left as it is.
   function markLegacy() {
     LIST_KEYS.slice(0, 3).forEach((k) => {
       const list = readJson(k);
@@ -299,11 +301,13 @@ const DeviceData = (function () {
       // No move needed: drop a marker left by claim() or by a closed tab.
       localStorage.removeItem(SWAP_KEY);
       if (current === uid) return 'same';
-      markLegacy();
       const left = await getStash(uid).catch(() => null);
       const merged = left ? mergeIntoActive(left) : false;
       localStorage.setItem(OWNER_KEY, uid);
       if (!get(LEGACY_IDB_KEY)) localStorage.setItem(LEGACY_IDB_KEY, uid);
+      // Only now, in the same step: the marks take room, and on a nearly
+      // full device they must never stop the owner from being recorded.
+      markLegacy();
       if (merged) await deleteStash(uid).catch(() => {});
       return 'adopted';
     }
@@ -322,9 +326,12 @@ const DeviceData = (function () {
     if (!uid) return 'same';
     try {
       // Hide the previous account's records at once: the sign-in page can
-      // move on to the next page before the stash has been written.
+      // move on to the next page before the stash has been written. A marker
+      // left by another account's failed claim is pointed at this one, so
+      // idbName never opens that account's databases for this one meanwhile.
       const current = owner();
-      if (current && current !== uid && !pendingSwap()) setSwap(current, uid, false);
+      const left = pendingSwap();
+      if (current && current !== uid && (!left || (!left.parked && left.to !== uid))) setSwap(current, uid, false);
       const run = () => claimLocked(uid);
       // One tab at a time, so two tabs never move the same records.
       if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
