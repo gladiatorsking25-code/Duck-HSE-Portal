@@ -78,12 +78,16 @@
   const PLAY_UNAVAILABLE = 'Google Play purchases are not available in this copy of the app. Update Duck HSE from the Play Store and try again. If it keeps happening, contact support.';
   const OTHER_ACCOUNT = 'The Google Play subscription on this phone is linked to another Duck HSE account. Sign in with that account to use it, or contact support.';
 
+  // Coming back from Stripe Checkout.
+  const checkoutState = new URLSearchParams(location.search).get('checkout');
+
   // Offline, the live answer below does not come for an account without
   // access (js/entitlements.js waits for the server to take access away), so
   // the last known answer shows the way to the read-only records at once,
-  // without waiting for Google Play. The live answer redraws this later.
+  // without waiting for Google Play. The live answer redraws this later. Not
+  // after paying by card: the page is waiting for that payment to land.
   const cachedAccess = Access.firebaseOn() ? Entitlements.cachedAccess() : null;
-  if (cachedAccess && !cachedAccess.hasAccess) {
+  if (cachedAccess && !cachedAccess.hasAccess && checkoutState !== 'success') {
     $('payLapsed').hidden = false;
     if (!navigator.onLine) $('payStatus').textContent = 'You are offline. Subscribing needs a connection; your records are below.';
   }
@@ -285,8 +289,7 @@
     }
   }
 
-  // Coming back from Stripe Checkout.
-  const checkoutState = new URLSearchParams(location.search).get('checkout');
+  // Came back from Stripe Checkout without paying.
   if (checkoutState === 'cancelled') show('info', 'Checkout was cancelled and you have not been charged.');
 
   function renderActivating() {

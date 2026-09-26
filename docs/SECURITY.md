@@ -89,11 +89,14 @@ Projects, a project and Settings stay open **read-only**, so nobody loses sight
 of their records: those pages call `requireAccess({ allowLapsed: true })`
 (`READ_ONLY_PAGES` in `js/access.js`), hide every control that changes data,
 and still let the account view, download and export. That is only the UX
-layer. `firestore.rules` still requires `hasAccess()` for every create and
-update; the one exception is a tombstone (`{ deleted: true, updatedAt }`) that
-marks one of the account's own records deleted. The Cloud Functions that
-change shared data (team membership, project files and backups) check
-`assertSubscribed` on the server.
+layer. `firestore.rules` still requires `hasAccess()` to create or update
+personal records and project data; the one exception is a tombstone
+(`{ deleted: true, updatedAt }`) that marks one of the account's own records
+deleted. (The account's own `users/{uid}` doc stays writable for its name and
+consent record.) The Cloud Functions that invite, change or remove team
+members, add or delete project files, or back up or restore a project check
+`assertSubscribed` on the server; joining a project from an invite and leaving
+one need no subscription.
 
 ---
 

@@ -66,7 +66,7 @@ function fakeDocument() {
 // cache from the last visit; `serverDoc` is what users/{uid} holds on the
 // server when the page reads it again.
 function loadPaywall({
-  cached = null, online = true, inTwa = false, play = {}, portal = async () => {}, serverDoc = {}
+  cached = null, online = true, inTwa = false, play = {}, portal = async () => {}, serverDoc = {}, search = ''
 } = {}) {
   const document = fakeDocument();
   const redirects = [];
@@ -89,7 +89,7 @@ function loadPaywall({
     URLSearchParams, Promise,
     document,
     navigator: { onLine: online },
-    location: { search: '', replace: (u) => redirects.push(u) },
+    location: { search, replace: (u) => redirects.push(u) },
     sessionStorage: { getItem: (k) => session.get(k) ?? null, setItem: (k, v) => session.set(k, String(v)), removeItem: (k) => session.delete(k) },
     setTimeout: (fn, ms) => { waits.push(ms); setImmediate(fn); return 0; },
     SUBSCRIPTION_CONFIG: {
@@ -155,6 +155,16 @@ test('offline, a locked account is shown its read-only records before Google Pla
   await settle();
   assert.equal(trial.$('payLapsed').hidden, true);
   assert.equal(trial.$('payStatus').textContent, '');
+});
+
+test('back from a card payment, the read-only links are not offered while it lands', async () => {
+  const p = loadPaywall({ cached: LOCKED, search: '?checkout=success', play: { ready: () => new Promise(() => {}) } });
+  await settle();
+  assert.equal(p.$('payLapsed').hidden, true);
+  const live = loadPaywall({ cached: LOCKED, search: '?checkout=success' });
+  await live.live(LOCKED);
+  assert.equal(live.$('payTitle').textContent, 'Payment received');
+  assert.equal(live.$('payLapsed').hidden, true);
 });
 
 test('the live answer still decides once it arrives', async () => {
