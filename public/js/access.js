@@ -58,12 +58,15 @@
   // ---- Helper for login.html: if already signed in AND has access, leave ----
   function handleLoginPage(onReady) {
     if (!firebaseOn()) { if (onReady) onReady('unconfigured'); return; }
+    // Pages that stay open to an account without access (to delete data or
+    // read the legal pages after the trial ends).
+    const OPEN_PAGES = ['account-deletion.html', 'privacy.html', 'terms.html', 'about.html'];
     armAuthWatch(function (user, access) {
+      const next = new URLSearchParams(location.search).get('next');
       if (user && access && access.hasAccess) {
-        const next = new URLSearchParams(location.search).get('next');
         go(next && /^[\w.-]+\.html/.test(next) ? next : 'index.html');
       } else if (user && access && !access.hasAccess) {
-        go(cfg().PAYWALL_PAGE);
+        go(OPEN_PAGES.indexOf(next) !== -1 ? next : cfg().PAYWALL_PAGE);
       } else if (onReady) {
         onReady('firebase');
       }

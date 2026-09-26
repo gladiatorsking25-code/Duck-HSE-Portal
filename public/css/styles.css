@@ -60,6 +60,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; }
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
 }
 .brand {
   padding: 22px 20px 18px;
@@ -355,12 +356,6 @@ body.printing-modal #lightboxRoot .modal {
   flex-wrap: wrap;
   gap: 6px 16px;
   align-items: center;
-}
-.app-footer .trial-tag {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 2px 8px; border-radius: 20px;
-  background: var(--warn-bg); color: #7a5308; font-weight: 700; font-size: 10.5px;
-  text-transform: uppercase; letter-spacing: .04em;
 }
 .app-footer a { color: var(--navy-700); text-decoration: none; font-weight: 600; }
 .app-footer a:hover { text-decoration: underline; }
@@ -835,3 +830,11 @@ body.modal-open { overflow: hidden; }
   .certificate-modal-grid { grid-template-columns:1fr; }
   .certificate-modal-grid .full { grid-column:auto; }
 }
+
+/* Dashboard: one tile per HSE module */
+.module-card { display: flex; flex-direction: column; gap: 8px; }
+.module-card h3 { margin: 0; font-size: 15px; }
+.module-card p { margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+.module-card .module-links { display: flex; gap: 14px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; font-size: 13px; font-weight: 600; }
+@media (max-width: 560px) { .module-grid { grid-template-columns: 1fr; } }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }

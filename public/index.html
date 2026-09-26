@@ -23,7 +23,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Duck HSE">
-<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<meta name="description" content="HSE management for teams: projects and action tracking, equipment inspections, HSE audit evidence packs, and lifting operations (crane assessments and lifting permits). Works on phone, tablet and desktop.">
 <link rel="icon" href="assets/icons/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
@@ -36,11 +36,11 @@
     <div class="topbar">
       <div>
         <h2>Dashboard</h2>
-        <div class="crumb">Overview of lifting activity</div>
+        <div class="crumb">Your HSE work at a glance</div>
       </div>
-      <div style="display:flex; gap:10px;">
-        <a class="btn" href="permit.html">+ New permit</a>
-        <a class="btn btn-primary" href="assessment.html">+ New assessment</a>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn" href="checklist.html">+ New inspection</a>
+        <a class="btn btn-primary" href="projects.html">Open projects</a>
       </div>
     </div>
 
@@ -51,11 +51,35 @@
 
       <div class="grid grid-4" id="stat-cards"></div>
 
-      <div class="section-title">Permits expiring soon</div>
-      <div id="expiring-permits"></div>
+      <div class="section-title">Your HSE tools</div>
+      <div class="grid grid-4 module-grid">
+        <div class="card module-card">
+          <h3>Projects &amp; actions</h3>
+          <p>Track actions, inspections, incidents and permits for each project, with your team.</p>
+          <div class="module-links"><a href="projects.html">Open projects</a></div>
+        </div>
+        <div class="card module-card">
+          <h3>Inspections</h3>
+          <p>Monthly equipment inspection checklists with colour codes, certificates and email forwarding.</p>
+          <div class="module-links"><a href="checklist.html">New inspection</a><a href="checklists.html">Records</a></div>
+        </div>
+        <div class="card module-card">
+          <h3>HSE audits</h3>
+          <p>Build audit evidence packs against ADOSH-SF Technical Guideline 15 and client procedures.</p>
+          <div class="module-links"><a href="audits.html">Prepare an audit</a></div>
+        </div>
+        <div class="card module-card">
+          <h3>Lifting operations</h3>
+          <p>Crane load-chart assessments, the crane selector, and lifting permits to work.</p>
+          <div class="module-links"><a href="assessment.html">New lift assessment</a><a href="permits.html">Lifting permits</a></div>
+        </div>
+      </div>
 
-      <div class="section-title">Recent assessments</div>
-      <div id="recent-assessments"></div>
+      <div class="section-title">Coming due</div>
+      <div id="coming-due"></div>
+
+      <div class="section-title">Recent records</div>
+      <div id="recent-records"></div>
 
       <div id="app-footer"></div>
     </div>
@@ -65,6 +89,8 @@
 <script src="js/crane-data.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/cloud-sync.js"></script>
+<script src="js/checklist-data.js"></script>
+<script src="js/projects.js"></script>
 <script src="js/nav.js"></script>
 <script>
 renderSidebar('index');
@@ -154,77 +180,140 @@ function renderSubscriptionPanel() {
 }
 renderSubscriptionPanel();
 
-const assessments = DB.getAssessments().sort((a,b) => new Date(b.date) - new Date(a.date));
-const permits = DB.getPermits();
+const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const badge = (kind, text) => `<span class="badge badge-${kind}"><span class="badge-dot"></span>${esc(text)}</span>`;
+const DAY_MS = 86400000;
+const now = new Date();
+const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-const passCount = assessments.filter(a => a.isValid).length;
-const failCount = assessments.length - passCount;
-const activePermits = permits.filter(p => new Date(p.validTo) >= new Date() && p.status !== 'suspended');
-const criticalOpen = permits.filter(p => p.isCriticalLift && new Date(p.validTo) >= new Date()).length;
+const assessments = DB.getAssessments();
+const permits = DB.getPermits();
+const checklists = DB.getChecklists();
+
+// Inspections: only the latest record for each piece of equipment counts.
+const equipmentKey = (c) => [c.equipmentType, c.assetNo || c.plateNo || c.serial || c.id].join('|');
+const latestByEquipment = new Map();
+checklists.forEach(c => {
+  const k = equipmentKey(c);
+  const cur = latestByEquipment.get(k);
+  if (!cur || String(c.inspectionDate || c.savedAt || '') > String(cur.inspectionDate || cur.savedAt || '')) latestByEquipment.set(k, c);
+});
+const latestInspections = [...latestByEquipment.values()];
+const dueTime = (c) => { const t = Date.parse(c.nextDue || ''); return Number.isNaN(t) ? null : t; };
+const inspectionsDue = latestInspections.filter(c => { const t = dueTime(c); return t !== null && t < dayStart + 8 * DAY_MS; });
+const inspectionsOverdue = inspectionsDue.filter(c => dueTime(c) < dayStart);
+const notFit = latestInspections.filter(c => c.verdict === 'unfit');
+const typeName = (id) => { const t = ChecklistData.typeById(id); return t ? (t.name.en || id) : (id || 'Equipment'); };
+const equipmentLabel = (c) => `${typeName(c.equipmentType)}${c.assetNo ? ' ' + c.assetNo : ''}`;
+
+const activePermits = permits.filter(p => new Date(p.validTo) >= now && p.status !== 'suspended');
+const criticalOpen = activePermits.filter(p => p.isCriticalLift).length;
 
 document.getElementById('stat-cards').innerHTML = `
   <div class="card stat-card">
-    <div class="label">Total assessments</div>
-    <div class="value">${assessments.length}</div>
-    <div class="foot">${passCount} allowed · ${failCount} not allowed</div>
+    <div class="label">Open projects</div>
+    <div class="value" id="statProjects">—</div>
+    <div class="foot"><a href="projects.html">that you are a member of</a></div>
   </div>
   <div class="card stat-card">
-    <div class="label">Active permits</div>
+    <div class="label">Inspections due</div>
+    <div class="value ${inspectionsOverdue.length ? 'danger' : ''}">${inspectionsDue.length}</div>
+    <div class="foot">${inspectionsOverdue.length} overdue · the rest within 7 days</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Not fit for use</div>
+    <div class="value ${notFit.length ? 'danger' : ''}">${notFit.length}</div>
+    <div class="foot">equipment, from the latest inspections</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Active lifting permits</div>
     <div class="value ok">${activePermits.length}</div>
-    <div class="foot">of ${permits.length} total on file</div>
-  </div>
-  <div class="card stat-card">
-    <div class="label">Critical lifts (open)</div>
-    <div class="value ${criticalOpen ? 'danger' : ''}">${criticalOpen}</div>
-    <div class="foot">require appointed-person sign-off</div>
-  </div>
-  <div class="card stat-card">
-    <div class="label">Fleet on file</div>
-    <div class="value">${Object.keys(CRANE_DATA).length}</div>
-    <div class="foot">crane models configured</div>
+    <div class="foot">${plural(criticalOpen, 'critical lift')} open</div>
   </div>
 `;
 
-// Expiring within 48h
-const soon = permits.filter(p => {
-  const hrs = (new Date(p.validTo) - new Date()) / 36e5;
-  return hrs > -1 && hrs < 48 && p.status !== 'suspended';
-}).sort((a,b) => new Date(a.validTo) - new Date(b.validTo));
+// Open projects come from the account, so they fill in once it has loaded.
+if (typeof Projects !== 'undefined' && typeof FIREBASE_READY !== 'undefined' && FIREBASE_READY) {
+  Projects.ready().then(() => {
+    firebase.auth().onAuthStateChanged((user) => {
+      if (!user) return;
+      Projects.watchMine(user.uid, (list) => {
+        document.getElementById('statProjects').textContent =
+          list.filter(p => ['planning', 'active', 'on_hold'].includes(p.status)).length;
+      }, () => { /* leave the dash on error */ });
+    });
+  }).catch(() => {});
+}
 
-document.getElementById('expiring-permits').innerHTML = soon.length ? `
-  <table class="data-table">
-    <thead><tr><th>Permit #</th><th>Location</th><th>Valid to</th><th>Status</th><th></th></tr></thead>
-    <tbody>
-      ${soon.map(p => {
-        const expired = new Date(p.validTo) < new Date();
-        return `<tr>
-          <td class="num">${p.permitNumber}</td>
-          <td>${p.location || '—'}</td>
-          <td class="num">${fmtDate(p.validTo)}</td>
-          <td>${expired ? '<span class="badge badge-fail"><span class="badge-dot"></span>Expired</span>' : '<span class="badge badge-warn"><span class="badge-dot"></span>Expiring soon</span>'}</td>
-          <td><a class="btn btn-sm" href="permit.html?id=${p.id}&mode=view">View</a></td>
-        </tr>`;
-      }).join('')}
-    </tbody>
-  </table>
-` : `<div class="card empty-state"><div class="icon">✓</div>No permits expiring in the next 48 hours.</div>`;
+// Coming due: inspections due within 7 days and lifting permits ending within 48 hours.
+const due = [
+  ...inspectionsDue.map(c => ({
+    at: dueTime(c), type: 'Inspection', item: equipmentLabel(c),
+    status: dueTime(c) < dayStart ? badge('fail', 'Overdue') : badge('warn', 'Due soon'),
+    when: new Date(dueTime(c)).toLocaleDateString(),
+    href: 'checklist.html?id=' + encodeURIComponent(c.id)
+  })),
+  ...permits.filter(p => {
+    const hrs = (new Date(p.validTo) - now) / 36e5;
+    return hrs > -1 && hrs < 48 && p.status !== 'suspended';
+  }).map(p => ({
+    at: new Date(p.validTo).getTime(), type: 'Lifting permit', item: `Permit ${p.permitNumber}${p.location ? ' · ' + p.location : ''}`,
+    status: new Date(p.validTo) < now ? badge('fail', 'Expired') : badge('warn', 'Expiring soon'),
+    when: fmtDate(p.validTo),
+    href: 'permit.html?id=' + encodeURIComponent(p.id) + '&mode=view'
+  }))
+].sort((a, b) => a.at - b.at);
 
-const recent = assessments.slice(0, 6);
-document.getElementById('recent-assessments').innerHTML = recent.length ? `
-  <table class="data-table">
-    <thead><tr><th>Date</th><th>Crane</th><th>Load (t)</th><th>Radius / Angle</th><th>Boom (m)</th><th>Result</th></tr></thead>
+document.getElementById('coming-due').innerHTML = due.length ? `
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th>Due</th><th>Type</th><th>Item</th><th>Status</th><th></th></tr></thead>
     <tbody>
-      ${recent.map(a => `<tr>
-        <td class="num">${fmtDate(a.date)}</td>
-        <td>${a.craneModel}</td>
-        <td class="num">${a.loadWeight.toFixed(1)}</td>
-        <td class="num">${a.jibMode ? a.boomAngle.toFixed(1) + '°' : (a.workingRadius != null ? a.workingRadius.toFixed(1) + ' m' : '—')}</td>
-        <td class="num">${a.boomLength != null ? a.boomLength.toFixed(1) : '—'}</td>
-        <td>${a.isValid ? '<span class="badge badge-ok"><span class="badge-dot"></span>Allowed</span>' : '<span class="badge badge-fail"><span class="badge-dot"></span>Not allowed</span>'}</td>
+      ${due.map(d => `<tr>
+        <td class="num">${esc(d.when)}</td>
+        <td>${esc(d.type)}</td>
+        <td>${esc(d.item)}</td>
+        <td>${d.status}</td>
+        <td><a class="btn btn-sm" href="${esc(d.href)}">View</a></td>
       </tr>`).join('')}
     </tbody>
-  </table>
-` : `<div class="card empty-state"><div class="icon">＋</div>No assessments yet. <a href="assessment.html">Run your first lift assessment</a>.</div>`;
+  </table></div>
+` : `<div class="card empty-state"><div class="icon">✓</div>Nothing due in the next 7 days.</div>`;
+
+// Recent records from every module, newest first.
+const recordTime = (v) => { const t = Date.parse(v || ''); return Number.isNaN(t) ? 0 : t; };
+const recent = [
+  ...checklists.map(c => ({
+    at: recordTime(c.inspectionDate || c.savedAt), type: 'Inspection', item: equipmentLabel(c),
+    result: c.verdict === 'unfit' ? badge('fail', 'Not fit for use') : c.verdict === 'conditional' ? badge('warn', 'Conditional') : badge('ok', 'Fit for use'),
+    href: 'checklist.html?id=' + encodeURIComponent(c.id)
+  })),
+  ...permits.map(p => ({
+    at: recordTime(p.validFrom), type: 'Lifting permit', item: `Permit ${p.permitNumber}${p.location ? ' · ' + p.location : ''}`,
+    result: p.status === 'suspended' ? badge('fail', 'Suspended') : new Date(p.validTo) < now ? badge('fail', 'Expired') : badge('ok', 'Active'),
+    href: 'permit.html?id=' + encodeURIComponent(p.id) + '&mode=view'
+  })),
+  ...assessments.map(a => ({
+    at: recordTime(a.date), type: 'Lift assessment', item: `${a.craneModel || 'Crane'} · ${Number(a.loadWeight || 0).toFixed(1)} t`,
+    result: a.isValid ? badge('ok', 'Allowed') : badge('fail', 'Not allowed'),
+    href: 'history.html?id=' + encodeURIComponent(a.id)
+  }))
+].sort((a, b) => b.at - a.at).slice(0, 8);
+
+document.getElementById('recent-records').innerHTML = recent.length ? `
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th>Date</th><th>Type</th><th>Record</th><th>Result</th><th></th></tr></thead>
+    <tbody>
+      ${recent.map(r => `<tr>
+        <td class="num">${r.at ? esc(new Date(r.at).toLocaleDateString()) : '—'}</td>
+        <td>${esc(r.type)}</td>
+        <td>${esc(r.item)}</td>
+        <td>${r.result}</td>
+        <td><a class="btn btn-sm" href="${esc(r.href)}">View</a></td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div>
+` : `<div class="card empty-state"><div class="icon">＋</div>No records yet. Start with a <a href="projects.html">project</a> or an <a href="checklist.html">inspection</a>.</div>`;
 </script>
 <script src="js/pwa.js"></script>
 </body>

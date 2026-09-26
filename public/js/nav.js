@@ -4,16 +4,16 @@ function renderSidebar(active) {
   const items = [
     { key: 'index', href: 'index.html', label: 'Dashboard', icon: 'grid' },
     { key: 'projects', href: 'projects.html', label: 'Projects', icon: 'folder' },
-    { key: 'assessment', href: 'assessment.html', label: 'New assessment', icon: 'gauge' },
-    { key: 'selector', href: 'crane-selector.html', label: 'Crane selector', icon: 'search' },
-    { key: 'history', href: 'history.html', label: 'Assessment history', icon: 'clock' },
-    { key: 'permit', href: 'permit.html', label: 'New permit', icon: 'doc' },
-    { key: 'permits', href: 'permits.html', label: 'All permits', icon: 'stack' },
-    { key: 'settings', href: 'settings.html', label: 'Fleet & backup', icon: 'gear' },
-    { key: 'about', href: 'about.html', label: 'About & legal', icon: 'info' },
-    { key: 'checklist', href: 'checklist.html', label: 'Equipment checklist', icon: 'clipboard' },
-    { key: 'checklists', href: 'checklists.html', label: 'Checklist records', icon: 'stack' },
+    { key: 'checklist', href: 'checklist.html', label: 'New inspection', icon: 'clipboard' },
+    { key: 'checklists', href: 'checklists.html', label: 'Inspection records', icon: 'stack' },
     { key: 'audits', href: 'audits.html', label: 'HSE audit preparation', icon: 'shield' },
+    { key: 'assessment', href: 'assessment.html', label: 'New lift assessment', icon: 'gauge' },
+    { key: 'selector', href: 'crane-selector.html', label: 'Crane selector', icon: 'search' },
+    { key: 'history', href: 'history.html', label: 'Lift assessment history', icon: 'clock' },
+    { key: 'permit', href: 'permit.html', label: 'New lifting permit', icon: 'doc' },
+    { key: 'permits', href: 'permits.html', label: 'Lifting permits', icon: 'stack' },
+    { key: 'settings', href: 'settings.html', label: 'Settings & backup', icon: 'gear' },
+    { key: 'about', href: 'about.html', label: 'About & legal', icon: 'info' },
   ];
   // Grouped by key, not by position, so adding an item can never shift
   // another into the wrong section.
@@ -42,20 +42,20 @@ function renderSidebar(active) {
       </div>
     </div>
     <nav class="nav">
-      <div class="section-label">Operations</div>
-      ${group(['index', 'projects', 'assessment', 'selector', 'history'])}
-      <div class="section-label">Permits</div>
-      ${group(['permit', 'permits'])}
-      <div class="section-label">Equipment</div>
+      <div class="section-label">Overview</div>
+      ${group(['index', 'projects'])}
+      <div class="section-label">Inspections</div>
       ${group(['checklist', 'checklists'])}
-      <div class="section-label">HSE audit</div>
+      <div class="section-label">Audits</div>
       ${group(['audits'])}
-      <div class="section-label">Configuration</div>
+      <div class="section-label">Lifting operations</div>
+      ${group(['assessment', 'selector', 'history', 'permit', 'permits'])}
+      <div class="section-label">Settings</div>
       ${group(['settings', 'about'])}
     </nav>
     <div class="sidebar-foot">
       <div id="navSubStatus" class="nav-sub-status"></div>
-      Data stored locally in this browser.<br>Export a backup regularly.<br>
+      Records are kept on this device and copied to your account.<br>Export a backup regularly.<br>
       <a href="terms.html">Terms</a> · <a href="privacy.html">Privacy</a> · <a href="account-deletion.html">Delete data</a><br>
       ${typeof APP_BUILD_LABEL !== 'undefined' ? `<span class="sidebar-build">${APP_BUILD_LABEL}</span><br>` : ''}
       <a href="#" class="logout-link" id="navLogoutLink">Sign out</a></div>
@@ -146,13 +146,19 @@ function mountMobileNavToggle() {
   window.addEventListener('resize', () => { if (window.innerWidth > 900) setOpen(false); });
 }
 
-function renderDisclaimer(elId) {
+// The warning banner. `topic` 'lifting' adds the load-chart and ADOSH-SF
+// CoP 34.0 wording for the lifting pages; everything else gets the general one.
+function renderDisclaimer(elId, topic) {
   const el = document.getElementById(elId);
   if (!el) return;
+  const cop = typeof ADOSH_COP_REFERENCE !== 'undefined' ? ADOSH_COP_REFERENCE : 'ADOSH-SF CoP 34.0 – Safe Use of Lifting Equipment and Lifting Accessories';
+  const text = topic === 'lifting'
+    ? `<strong>Verify before you rely on this.</strong> An appointed person must check every lift against the crane's official, current load chart before work begins — this tool supports planning, it does not replace it. Lifting operations should be planned and controlled in line with <strong>${cop}</strong> and any other applicable local regulations, which take precedence over anything shown here.`
+    : `<strong>Verify before you rely on this.</strong> This portal helps you plan, record and track HSE work. It does not replace competent-person judgement, your site's procedures, or the law. Applicable regulations, such as the ADOSH-SF codes of practice, take precedence over anything shown here.`;
   el.innerHTML = `
     <div class="banner banner-warn">
       <svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-      <div><strong>Verify before you rely on this.</strong> An appointed person must check every lift against the crane's official, current load chart before work begins — this tool supports planning, it does not replace it. Lifting operations should be planned and controlled in line with <strong>${typeof ADOSH_COP_REFERENCE !== 'undefined' ? ADOSH_COP_REFERENCE : 'ADOSH-SF CoP 34.0 – Safe Use of Lifting Equipment and Lifting Accessories'}</strong> and any other applicable local regulations, which take precedence over anything shown here.</div>
+      <div>${text}</div>
     </div>
   `;
 }
@@ -162,8 +168,7 @@ function renderFooter(elId) {
   if (!el) return;
   el.innerHTML = `
     <div class="app-footer no-print">
-      <span class="trial-tag">Trial · Educational use only</span>
-      <span>Not for operational lift decisions.</span>
+      <span>Supports, never replaces, competent-person decisions.</span>
       <span class="sep">|</span>
       <span>Developed by <strong>Sabir Amin</strong></span>
       <span class="sep">|</span>

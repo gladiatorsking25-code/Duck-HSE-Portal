@@ -22,7 +22,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Duck HSE">
-<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and lifting permits, aligned with ADOSH-SF CoP 34.0. A planning aid, not a replacement for the certified load chart or an Appointed Person's sign-off.">
 <link rel="icon" href="assets/icons/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
@@ -80,7 +80,7 @@
 <script src="js/crane-selector.js"></script>
 <script>
 renderSidebar('selector');
-renderDisclaimer('disclaimer-banner');
+renderDisclaimer('disclaimer-banner', 'lifting');
 renderFooter('app-footer');
 
 const selLoad = document.getElementById('selLoad');
@@ -121,7 +121,7 @@ document.getElementById('btnFind').addEventListener('click', () => {
         <svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 2L1 21h22L12 2z" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M12 9v5M12 17h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <div>No crane/configuration currently on file can lift ${load.toFixed(1)} t at ${radius.toFixed(1)} m radius${opts.maxBoomLength ? ` within a ${opts.maxBoomLength} m boom limit` : ''}.
         ${best ? `The largest capacity available in the fleet at this radius is <strong>${best.capacity.toFixed(2)} t</strong>, using the <strong>${best.craneModel}</strong> (${configLabel(best.configuration)}, ${best.boomLength} m boom).` : 'No configuration in the fleet reaches this radius at all.'}
-        Consider a larger crane, a shorter radius, or check Fleet &amp; Backup for other available equipment.</div>
+        Consider a larger crane, a shorter radius, or check Settings &amp; backup for other available equipment.</div>
       </div>`;
     return;
   }

@@ -4,8 +4,9 @@
 <!-- NOTE: this page is deliberately NOT behind requireAccess().
      Google Play's User Data policy requires the account/data deletion URL you
      submit in Play Console to be reachable by anyone, without signing in or
-     installing the app. Gating it behind the sign-in screen is a common cause
-     of a "Data deletion" policy rejection. -->
+     installing the app, so anyone can READ it and REQUEST deletion. Actually
+     erasing data from this device needs the signed-in account's password, so
+     someone else picking up the device can't wipe the owner's records. -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Delete your data · Duck HSE Portal</title>
@@ -22,6 +23,10 @@
 <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
 <script src="js/app-version.js"></script>
+<!-- Only the Firebase SDK, not firebase-auth.js: this page must not start
+     cloud sync, which would copy records back while they are being erased. -->
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
 </head>
 <body>
 <div class="app-shell">
@@ -37,37 +42,55 @@
     <div class="content" style="max-width: 820px;">
 
       <div class="banner banner-info">
-        <div>This page is public on purpose. You do not need to sign in, install the app, or
-        contact anyone to use the options below.</div>
+        <div>Anyone can read this page and ask for an account to be deleted. To erase data from
+        this device you must be signed in and confirm your password, so nobody else using the
+        device can wipe your records.</div>
       </div>
 
       <div class="section-title" style="margin-top:0;">What data exists, and where</div>
       <div class="card">
         <table class="spec-table">
-          <tr><td>Lift assessments, permits, signatures, names, notes, equipment checklists</td><td>Stored on your own device only (browser <code>localStorage</code>)</td></tr>
-          <tr><td>Certificate photos attached to checklists</td><td>Stored on your own device only (browser <code>IndexedDB</code>)</td></tr>
-          <tr><td>Sign-in state for the app's access gate</td><td>Your device only (<code>sessionStorage</code>)</td></tr>
-          <tr><td>Terms / Privacy acceptance record</td><td>Your device only</td></tr>
-          <tr><td>Cloud account &amp; synced records</td><td>Only if you created a cloud account — see option 3</td></tr>
+          <tr><td>Your account: email address, free-trial and subscription status</td><td>Your account (Google Firebase)</td></tr>
+          <tr><td>Projects you create or join, their tracked items and activity log</td><td>Your account (Google Firebase), shared with that project's team</td></tr>
+          <tr><td>Inspection checklists, permits, lift assessments, signatures, names and notes</td><td>This device (browser storage), with a copy in your account while you are signed in</td></tr>
+          <tr><td>Certificate photos and HSE audit evidence files</td><td>This device only (browser <code>IndexedDB</code>)</td></tr>
+          <tr><td>Payment details</td><td>Held by Stripe (website) or Google Play (Android app), never by this app. The app keeps only your plan and its status.</td></tr>
+          <tr><td>Terms / Privacy acceptance record</td><td>This device only</td></tr>
         </table>
-        <p class="hint" style="margin-top:10px;">
-          The standard build has no server. If you never created a cloud account, deleting the
-          app or clearing its data removes everything, and there is nothing held about you
-          anywhere else.
-        </p>
       </div>
 
-      <div class="section-title">Option 1 — Erase everything on this device now</div>
+      <div class="section-title">Option 1 — Erase everything on this device</div>
       <div class="card">
         <p style="margin-top:0; color:var(--ink-soft); font-size:13.5px;">
-          This permanently deletes every assessment, permit, signature, note, saved preference,
-          and the offline copy of the app from this device. It cannot be undone.
-          <strong>Export a backup first</strong> from Fleet &amp; Backup if you need the records.
+          This permanently deletes every checklist, permit, assessment, signature, note, photo,
+          saved preference, and the offline copy of the app from this device, then signs you out.
+          It cannot be undone. <strong>Export a backup first</strong> from Settings &amp; backup if
+          you need the records. Copies kept in your account are not touched; to delete those, use
+          option 3.
         </p>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <a class="btn" href="settings.html">Export a backup first</a>
-          <button class="btn btn-danger" id="btnWipe">Erase all data on this device</button>
+
+        <div id="wipeSignedOut" hidden>
+          <p style="margin:0 0 10px; font-size:13.5px;">Sign in to erase data on this device.</p>
+          <a class="btn btn-primary" href="login.html?next=account-deletion.html">Sign in</a>
         </div>
+
+        <div id="wipeUnavailable" hidden>
+          <p style="margin:0; font-size:13.5px;">Erasing from this page is switched off because
+          this copy of the portal has no sign-in set up. Use option 2 instead.</p>
+        </div>
+
+        <form id="wipeForm" hidden autocomplete="off">
+          <p style="margin:0 0 10px; font-size:13.5px;">Signed in as <strong id="wipeEmail"></strong>.
+          Enter your password to confirm it's you.</p>
+          <div class="field" style="max-width:320px;">
+            <label for="wipePassword">Password</label>
+            <input type="password" id="wipePassword" autocomplete="current-password" required>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <a class="btn" href="settings.html">Export a backup first</a>
+            <button class="btn btn-danger" type="submit" id="btnWipe">Erase all data on this device</button>
+          </div>
+        </form>
         <div id="wipeResult" style="margin-top:12px;"></div>
       </div>
 
@@ -76,29 +99,29 @@
         <p style="margin:0; color:var(--ink-soft); font-size:13.5px;">
           Uninstalling the Android app, or clearing its storage from
           <strong>Android Settings → Apps → Duck HSE Portal → Storage → Clear storage</strong>,
-          deletes all locally held data as well. In a desktop browser, clear site data for this
-          site from the browser's privacy settings.
+          deletes all data held on the device as well. In a browser, clear site data for this
+          site from the browser's privacy settings. Neither deletes your account.
         </p>
       </div>
 
-      <div class="section-title">Option 3 — Delete a cloud account and its synced records</div>
+      <div class="section-title">Option 3 — Delete your account and everything stored with it</div>
       <div class="card">
         <p style="margin-top:0; color:var(--ink-soft); font-size:13.5px;">
-          Only relevant if you signed up for the optional cloud-sync account. To request deletion
-          of the account and every record synced to it, email the address below from the address
-          the account is registered to, with the subject <strong>"Delete my account and data"</strong>:
+          To delete your account and every record kept in it, email the address below from the
+          address the account is registered to, with the subject
+          <strong>"Delete my account and data"</strong>:
         </p>
         <table class="spec-table">
           <tr><td>Email</td><td><a id="contactEmail" href="#">—</a></td></tr>
           <tr id="contactPhoneRow" hidden><td>Phone</td><td><a id="contactPhone" href="#">—</a></td></tr>
-          <tr><td>What is deleted</td><td>Account record, authentication identity, and all assessments/permits synced to it</td></tr>
+          <tr><td>What is deleted</td><td>Account record, sign-in identity, the records copied to your account, and your membership of every project. Projects you own are handed to another manager or deleted, as you choose.</td></tr>
           <tr><td>What may be retained, and why</td><td>Records the operator is required to keep by law (for example accounting/VAT records of a paid subscription), retained only for the statutory period and then deleted</td></tr>
           <tr><td>Response time</td><td>Acknowledged within 7 days; completed within 30 days</td></tr>
         </table>
         <p class="hint" style="margin-top:10px;">
-          Deleting your account here does <strong>not</strong> cancel a Google Play subscription.
-          Cancel that separately in the Play Store app under
-          <strong>Payments &amp; subscriptions → Subscriptions</strong>, or it will keep renewing.
+          Deleting your account does <strong>not</strong> cancel a subscription. Cancel it first, or
+          it will keep renewing: on the website from <strong>Manage plan</strong> on your dashboard,
+          or in the Play Store app under <strong>Payments &amp; subscriptions → Subscriptions</strong>.
         </p>
       </div>
 
@@ -141,10 +164,30 @@ renderFooter('app-footer');
   }
 })();
 
-document.getElementById('btnWipe').addEventListener('click', async () => {
-  if (!confirm('This permanently deletes ALL assessments, permits and signatures stored on this device, and the app\'s offline copy. Export a backup first if you have not already. Continue?')) return;
-  if (!confirm('Last check — this cannot be undone. Erase everything?')) return;
+const $ = (id) => document.getElementById(id);
+function wipeMessage(kind, text) {
+  $('wipeResult').innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'banner banner-' + kind;
+  div.textContent = text;
+  $('wipeResult').appendChild(div);
+}
 
+// Show the erase form only to a signed-in user. No sign-in configured → no
+// erase button at all (fail closed).
+if (typeof FIREBASE_READY === 'undefined' || !FIREBASE_READY) {
+  $('wipeUnavailable').hidden = false;
+} else {
+  firebaseReadyPromise.then(() => {
+    firebase.auth().onAuthStateChanged((user) => {
+      $('wipeForm').hidden = !user;
+      $('wipeSignedOut').hidden = !!user;
+      if (user) $('wipeEmail').textContent = user.email || '';
+    });
+  }).catch(() => { $('wipeUnavailable').hidden = false; });
+}
+
+async function eraseDevice() {
   try { localStorage.clear(); } catch (e) { console.error(e); }
   try { sessionStorage.clear(); } catch (e) { console.error(e); }
   // Certificate photos are stored in IndexedDB, which localStorage.clear() does
@@ -166,9 +209,32 @@ document.getElementById('btnWipe').addEventListener('click', async () => {
       await Promise.all(regs.map(r => r.unregister()));
     }
   } catch (e) { console.error(e); }
+}
 
-  document.getElementById('wipeResult').innerHTML =
-    '<div class="banner banner-ok"><div>All local data, the offline copy of the app, and the sign-in session have been erased from this device.</div></div>';
+$('wipeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const user = firebase.auth().currentUser;
+  if (!user) return;
+  const btn = $('btnWipe');
+  btn.disabled = true;
+  $('wipeResult').innerHTML = '';
+  try {
+    // Proves the person at the device knows this account's password.
+    const cred = firebase.auth.EmailAuthProvider.credential(user.email, $('wipePassword').value);
+    await user.reauthenticateWithCredential(cred);
+  } catch (err) {
+    btn.disabled = false;
+    wipeMessage('danger', 'That password is not right, so nothing was erased.');
+    return;
+  }
+  if (!confirm('This permanently deletes ALL checklists, permits, assessments, signatures and photos stored on this device, and the app\'s offline copy. Export a backup first if you have not already. Continue?')) {
+    btn.disabled = false;
+    return;
+  }
+  await eraseDevice();
+  try { await firebase.auth().signOut(); } catch (err) { console.error(err); }
+  $('wipePassword').value = '';
+  wipeMessage('ok', 'All data, the offline copy of the app and your sign-in have been erased from this device. Copies kept in your account come back the next time you sign in here; use option 3 to delete them.');
 });
 </script>
 <script src="js/pwa.js"></script>

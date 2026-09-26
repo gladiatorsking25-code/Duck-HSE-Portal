@@ -130,7 +130,55 @@ try {
     await alice.setViewportSize({ width: 1366, height: 900 });
   }
 
-  for (const [name, p] of [['alice', alice], ['bob', bob]]) {
+  // 10. The dashboard covers every HSE module and counts Alice's project.
+  await alice.goto(BASE + 'index.html');
+  await alice.waitForFunction(() => typeof DB !== 'undefined' && typeof EQUIPMENT_TYPES !== 'undefined');
+  await alice.evaluate(() => DB.saveChecklist({
+    equipmentType: EQUIPMENT_TYPES[0].id, assetNo: 'FL-07', inspectionDate: '2026-08-01',
+    nextDue: '2026-09-01', verdict: 'unfit', savedAt: new Date().toISOString()
+  }));
+  await alice.reload();
+  await alice.waitForFunction(() => document.getElementById('statProjects')?.textContent === '1', null, { timeout: 15000 });
+  assert.equal(await alice.textContent('.topbar .crumb'), 'Your HSE work at a glance');
+  assert.equal(await alice.locator('.module-card').count(), 4);
+  assert.match(await alice.textContent('#coming-due'), /FL-07[\s\S]*Overdue/);
+  assert.match(await alice.textContent('#recent-records'), /Inspection[\s\S]*FL-07[\s\S]*Not fit for use/);
+  assert.doesNotMatch(await alice.textContent('body'), /lifting activity|Not for operational lift decisions/);
+  step('Dashboard covers all HSE modules and shows what is coming due');
+  if (process.env.E2E_SHOTS) {
+    await alice.setViewportSize({ width: 1366, height: 900 });
+    await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'dashboard-desktop.png'), fullPage: true });
+    await alice.setViewportSize({ width: 390, height: 844 });
+    await alice.waitForTimeout(500);   // let the sidebar finish sliding away
+    await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'dashboard-mobile.png'), fullPage: true });
+    await alice.setViewportSize({ width: 1280, height: 720 });
+  }
+
+  // 11. Delete my data: nobody signed out can erase; signed in needs the password.
+  const visitor = await newUser();
+  await visitor.goto(BASE + 'account-deletion.html');
+  await visitor.waitForSelector('#wipeSignedOut:not([hidden])');
+  assert.equal(await visitor.isVisible('#btnWipe'), false);
+  assert.equal(await visitor.isVisible('#wipeForm'), false);
+  step('A signed-out visitor gets no erase button');
+
+  await alice.goto(BASE + 'account-deletion.html');
+  await alice.waitForSelector('#wipeForm:not([hidden])');
+  assert.equal(await alice.textContent('#wipeEmail'), 'alice@example.com');
+  await alice.fill('#wipePassword', 'not-my-password');
+  await alice.click('#btnWipe');
+  await alice.waitForFunction(() => /not right/.test(document.getElementById('wipeResult').textContent), null, { timeout: 15000 });
+  assert.ok(await alice.evaluate(() => DB.getChecklists().length > 0), 'nothing erased on a wrong password');
+  if (process.env.E2E_SHOTS) await alice.screenshot({ path: path.join(process.env.E2E_SHOTS, 'erase-signed-in.png'), fullPage: true });
+  await alice.fill('#wipePassword', 'correct-horse-battery');
+  await alice.click('#btnWipe');
+  await alice.waitForFunction(() => /have been erased/.test(document.getElementById('wipeResult').textContent), null, { timeout: 15000 });
+  assert.equal(await alice.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('cla_')).length), 0);
+  await alice.waitForSelector('#wipeSignedOut:not([hidden])');
+  step('Erasing needs the password, then wipes the device and signs out');
+
+
+  for (const [name, p] of [['alice', alice], ['bob', bob], ['visitor', visitor]]) {
     assert.deepEqual(p.errors, [], `${name} page errors`);
   }
   step('No JavaScript errors');
