@@ -217,7 +217,7 @@ accounts by hand from `admin.html`. Set `OFFLINE_PAYMENT.enabled` to `false` in
 | Paid, but the app still asks to subscribe | Check the webhook deliveries in Stripe. A `400` means the signing secret is wrong (step 5). A `500` shows the reason in `firebase functions:log --only stripeWebhook`; Stripe retries on its own for up to three days. Meanwhile the customer can press **Subscribe** again: they are not charged twice, the app finds the subscription in Stripe, unlocks the account and opens the billing portal. |
 | "There is no card subscription on this account." on **Manage plan** for an account that shows a card plan | Its Stripe customer is not in this Stripe mode, usually a test-mode leftover after going live. Clear it as in **Go live**, item 6. |
 | "This account is suspended. Please contact support." | The account is `revoked` on `admin.html`, so checkout is refused. If they may subscribe again, lift the revoke there with a grant button (**+30d**, **+1y**, **Forever**) or **+14d trial**. |
-| The admin page shows a user as `revoked` who is paying | A revoke is not lifted by a payment. Use **Grant** on `admin.html` to restore them, and cancel their subscription in Stripe if they should not be charged. The billing portal stays open to them for that. |
+| The admin page shows a user as `revoked` who is paying | A revoke is not lifted by a payment. Use **Grant** on `admin.html` to restore them, and cancel their subscription in Stripe if they should not be charged. The billing portal stays open to them for that: the suspended screen offers **Manage card billing**. |
 
 ## Testing locally
 
