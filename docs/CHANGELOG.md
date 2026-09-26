@@ -11,6 +11,29 @@ No install; runs in any modern browser on phone, tablet or desktop.
 
 ## Changelog
 
+- **Go-live guide and deploy tools (no change to the app itself)**
+  - `docs/DEPLOY.md`: one guide, in order, from an empty Hostinger site to taking
+    payments: tools, Firebase console settings, Stripe, function settings, Google
+    Drive, deploying the back end, uploading the website, making yourself admin,
+    a live test list, a before-you-sell checklist, updating later, and fixes for
+    common problems.
+  - `node tools/check-deploy.mjs` reads the settings and reports anything missing
+    or unsafe: keys or settings files inside `public/`, text that looks like a
+    private key or Stripe secret, a placeholder Firebase config, a deploy target
+    that is not the website's project, `APP_ORIGIN` and Stripe price problems,
+    Stripe secrets in `functions/.env`, versions out of step, and empty publisher
+    details. It changes nothing.
+  - `node tools/package-site.mjs` runs the website checks, then zips the contents
+    of `public/` (including `.htaccess`) into `dist/` for Hostinger's File
+    Manager. Needs only Node.js.
+  - `.firebaserc` names the `duck-hse-portal` project, so `firebase deploy` goes
+    to the same project the website uses. The tests keep using their own demo
+    project.
+  - README, the file map and the outdated "Data storage" and "GitHub Pages"
+    notes now describe how the portal actually runs.
+  - 5 unit tests for the tools (`test/tools.test.mjs`), including reading the zip
+    back byte for byte.
+
 - **Project files, photos and backups in Google Drive (v1.12.0)**
   - **Files and photos on every project.** Editors, managers and the owner can add
     method statements, risk assessments, certificates, drawings, emails and site
@@ -636,46 +659,37 @@ replace that determination.
 
 ## Data storage — read this
 
-There is no server or database. All assessments and permits are stored in the
-browser's `localStorage`, scoped to whichever URL you open this from. That means:
-
-- Data does **not** sync between devices or browsers on its own.
-- Clearing your browser's site data deletes your records.
-- **Export a backup regularly** from the Fleet & Backup page, and keep the `.json`
-  file somewhere shared with your team (e.g. in the same repo, or a shared drive).
-- If your team needs shared, always-in-sync records across multiple people, this
-  static-site design isn't enough on its own — you'd want to add a small backend
-  (e.g. Firebase, Supabase, or a simple API) behind the same UI. The `js/storage.js`
-  file is written as a single data-access layer specifically so that swap is
-  localized to one file.
+- **Your account and shared data** (projects, tracked items, the activity log,
+  and a copy of your permits, assessments and checklists) are kept in Firebase
+  (Cloud Firestore), so they follow you across devices and your team sees the
+  same projects.
+- **Project files, photos and backups** are kept in the portal owner's Google
+  Drive, reached only through the Cloud Functions (see `docs/DRIVE_FILES.md`).
+- **On each device**, permits, assessments and checklists are also kept in the
+  browser so the app works without a signal. Checklist certificate photos and
+  HSE audit evidence packs stay on the device only, so back those up with
+  **Export** on the Settings & backup page.
+- Who can read or change what is enforced on the server by `firestore.rules`,
+  not by the browser (see `docs/SECURITY.md`).
 
 ## Running it locally
 
-No build step. Open `index.html` directly in a browser (you'll land on the sign-in
-screen first — see **Signing in** above), or serve the folder:
+No build step. Serve the `public/` folder and open it in a browser:
 
 ```bash
+cd public
 python3 -m http.server 8000
 # then visit http://localhost:8000
 ```
 
-## Deploying on GitHub Pages
+Sign-in needs a Firebase project (`public/js/firebase-config.js`). The tests in
+`test/` run everything against the Firebase emulators instead (see the README).
 
-1. Create a new GitHub repository and push this folder's contents to it.
-2. In the repo, go to **Settings → Pages**.
-3. Under **Build and deployment**, set **Source** to "Deploy from a branch", pick your
-   default branch and the `/ (root)` folder, then save.
-4. GitHub will publish the site at `https://<your-username>.github.io/<repo-name>/`
-   within a minute or two.
+## Deploying
 
-```bash
-git init
-git add .
-git commit -m "Crane lifting assessment web app"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<repo-name>.git
-git push -u origin main
-```
+The website goes on Hostinger and the back end on Firebase. Follow
+`docs/DEPLOY.md`; `node tools/check-deploy.mjs` checks the settings and
+`node tools/package-site.mjs` makes the zip to upload.
 
 ## Project structure
 
@@ -724,6 +738,11 @@ functions/projects.js      Team membership rules (invites, roles, ownership)
 functions/files.js         File and backup rules: allowed types, sizes, who may delete, restore plan
 functions/project-drive.js Firestore + Drive work behind the file and backup functions
 functions/drive.js         The Google Drive calls (service account), plus the local test stand-in
+
+--- Deploying (see docs/DEPLOY.md) ---
+tools/check-deploy.mjs     Checks settings before going live (keys in public/, config, versions)
+tools/package-site.mjs     Zips public/ (with .htaccess) for Hostinger's File Manager
+.firebaserc                The Firebase project that `firebase deploy` targets
 
 --- Accounts & subscriptions (activation-ready; see SECURITY.md) ---
 js/subscription-config.js  Trial length, Play product IDs, package name
