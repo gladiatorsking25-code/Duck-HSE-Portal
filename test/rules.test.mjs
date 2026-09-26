@@ -190,6 +190,33 @@ test('a lapsed account can still mark its own records deleted, and only with a p
   await assertFails(setDoc(doc(db('owner'), 'users', 'lapsed', 'permits', 'p3'), { deleted: true, updatedAt: Date.now() }));
 });
 
+test('a deleted account cannot write its profile or records back, and the marker is server only', async () => {
+  // `gone` is deleted; `owner` is being deleted (its users doc is still there).
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const a = ctx.firestore();
+    await setDoc(doc(a, 'deletedAccounts', 'gone'), { deletedAt: new Date() });
+    await setDoc(doc(a, 'deletedAccounts', 'owner'), { deletedAt: new Date() });
+    await setDoc(doc(a, 'users', 'owner', 'permits', 'old'), { id: 'old', title: 'Kept', updatedAt: 1 });
+  });
+  const trial = { subscriptionStatus: 'trial', trialStartedAt: Date.now(), trialEndsAt: Date.now() + 14 * DAY };
+  await assertFails(setDoc(doc(db('gone'), 'users', 'gone'), trial, { merge: true }));
+  await assertFails(setDoc(doc(db('gone'), 'users', 'gone'), { displayName: 'Back again' }));
+  for (const name of ['assessments', 'permits', 'checklists']) {
+    await assertFails(setDoc(doc(db('gone'), 'users', 'gone', name, 'r1'), { deleted: true, updatedAt: Date.now() }));
+    await assertFails(setDoc(doc(db('owner'), 'users', 'owner', name, 'r1'), { id: 'r1', updatedAt: Date.now() }));
+  }
+  await assertFails(setDoc(doc(db('owner'), 'users', 'owner', 'permits', 'old'), { id: 'old', title: 'Changed', updatedAt: Date.now() }));
+  await assertFails(setDoc(doc(db('owner'), 'users', 'owner', 'permits', 'old'), { deleted: true, updatedAt: Date.now() }));
+  // Everyone else is unaffected.
+  await assertSucceeds(setDoc(doc(db('fresh'), 'users', 'fresh'), trial, { merge: true }));
+  await assertSucceeds(setDoc(doc(db('manager'), 'users', 'manager', 'permits', 'r1'), { id: 'r1', updatedAt: Date.now() }));
+  // Nobody can read, add or remove a marker from the app.
+  await assertFails(getDoc(doc(db('gone'), 'deletedAccounts', 'gone')));
+  await assertFails(deleteDoc(doc(db('gone'), 'deletedAccounts', 'gone')));
+  await assertFails(getDoc(doc(db('manager'), 'deletedAccounts', 'owner')));
+  await assertFails(setDoc(doc(db('manager'), 'deletedAccounts', 'manager'), { deletedAt: new Date() }));
+});
+
 // ---- Creating projects ---------------------------------------------------
 test('a trial user can create a project as its sole owner', async () => {
   await assertSucceeds(setDoc(doc(db('owner'), 'projects', 'new1'), newProject('owner')));

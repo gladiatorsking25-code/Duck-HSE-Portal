@@ -252,10 +252,14 @@ page promises it is done within 30 days.
    card in the Stripe Dashboard (**Customers** → their address → cancel the
    subscription), through Google Play in Play Console (**Order management** →
    their order → cancel). Keep the invoices the law requires you to keep.
-3. Open the site's **Admin** page → **Users & access**, search for the address
-   and click **Delete account**. It lists what will happen first: the projects
-   they leave, the projects archived because nobody else belongs to them, and
-   a warning if a subscription still renews.
+3. Open the site's **Admin** page → **Users & access** and search for the
+   address. The list holds the newest 500 accounts: for an older one, type the
+   full address and press Enter (or click **Search all accounts**). Projects
+   only they belong to are deleted; if they asked to keep them, tick **Keep
+   their own projects archived**. Click **Delete account**. It lists what will
+   happen first: the projects they leave, the projects deleted (or, with the
+   box ticked, archived) because nobody else belongs to them, and a warning if
+   a subscription still renews.
 4. If it says they own a project other people still use, it stops and names the
    project. Ask them who should take it over, and either let them hand it over
    (project page → **Team** → **Make owner**) or do it in Firebase Console →
@@ -264,24 +268,25 @@ page promises it is done within 30 days.
    entry to `manager`. Then click **Delete account** again.
 5. Type their email address to confirm. The portal deletes their sign-in, their
    `users` record with the assessments, permits and checklists saved to it,
-   their file-space count and any Google Play purchase links; takes them out of
-   every project and cancels invites to their address; replaces their address
-   with "deleted user" in every project's activity log, file list and backup
-   list; archives projects only they belonged to; and notes in `adminLog` that
-   you did it, without the address.
-6. Files they added stay with the project for its team. If they ask for those
-   to go too, ask the project's owner or a manager to delete them on the
-   project page. If they want an archived project of their own deleted rather
-   than kept: delete its folder in the shared drive, run
-   `firebase firestore:delete projects/<id> --recursive` and
-   `firebase firestore:delete driveFolders/<id>`, and lower `usedBytes` and
-   `fileCount` in `driveTotals/all` by what `driveFolders/<id>` held.
+   their file-space count and any Google Play purchase links; deletes each
+   project only they belonged to, with its items, files, backups and Drive
+   folder (moved to the shared drive's trash, emptied after 30 days), and gives
+   its file space back (unless you ticked the box: then it is archived and
+   kept); takes them out of every other project and cancels invites to their
+   address; replaces their address with "deleted user" in every project's
+   activity log, file list and backup list; and notes in `adminLog` that you
+   did it, without the address. `deletedAccounts/<uid>` keeps only the date,
+   so an app still open on their device cannot write their records back.
+6. Files they added to other people's projects stay with those projects for
+   their teams. If they ask for those to go too, ask the project's owner or a
+   manager to delete them on the project page.
 7. Project **backups** already in Google Drive still hold their address. Each
    project keeps its last 30 nightly backups (made only on nights the project
    changed), 20 manual ones and 10 restore points, so in a quiet project they
-   can last many months. If they ask, delete the backups of the projects they
-   belonged to: the `.json` files in each project's `Backups` folder, and the
-   matching documents under `projects` → the project → `backups` in Firestore.
+   can last many months. If they ask, delete the backups of the other projects
+   they belonged to: the `.json` files in each project's `Backups` folder, and
+   the matching documents under `projects` → the project → `backups` in
+   Firestore.
 8. Reply to confirm it is done. Data kept only on their own devices is theirs
    to clear; the Account deletion page has a button for it.
 

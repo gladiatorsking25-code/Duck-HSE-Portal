@@ -10,8 +10,9 @@
 // loses sight of their records when a trial or subscription ends: Projects,
 // a project, and Settings (to export). They call
 // requireAccess({ allowLapsed: true }), then check Access.readOnly (or listen
-// with Access.onReadOnlyChange) and hide every control that changes data.
-// The Firestore rules and Cloud Functions refuse those writes anyway.
+// with Access.onReadOnlyChange) and hide every control that changes data;
+// only leaving a project stays open. The Firestore rules and Cloud Functions
+// refuse those writes anyway.
 //
 // Enforcement of DATA is always the Firestore rules on Google's servers — this
 // gate is the UX layer that routes people to the right screen. The rules can't

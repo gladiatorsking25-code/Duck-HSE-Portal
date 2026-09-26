@@ -92,6 +92,12 @@ service cloud.firestore {
         && request.resource.data.deleted == true
         && request.resource.data.updatedAt is number;
     }
+    // An account deleted on request (functions/account-delete.js). A page
+    // still open on its device keeps a valid token for up to an hour, so it
+    // must not write the users doc or its records back.
+    function notDeleted(uid) {
+      return !exists(/databases/$(database)/documents/deletedAccounts/$(uid));
+    }
 
     match /users/{uid} {
       allow get:  if isOwner(uid) || isAdmin();
@@ -99,7 +105,7 @@ service cloud.firestore {
 
       // Create: a plain profile doc (profile fields only), OR a one-time trial
       // doc holding only the trial fields.
-      allow create: if isOwner(uid) && (
+      allow create: if isOwner(uid) && notDeleted(uid) && (
              profileOk(request.resource.data, request.resource.data.keys())
           || ( request.resource.data.keys().hasOnly(trialKeys()) && trialWindowOk() )
       );
@@ -119,17 +125,18 @@ service cloud.firestore {
       // subscription or trial; reading, deleting and marking a record deleted
       // (a tombstone: exactly { deleted: true, updatedAt: <number> }) do not,
       // so a lapsed account can still see, export and tidy up its own records.
+      // A deleted account writes nothing.
       match /assessments/{docId} {
         allow read, delete: if isOwner(uid);
-        allow create, update: if isOwner(uid) && (isTombstone() || hasAccess());
+        allow create, update: if isOwner(uid) && notDeleted(uid) && (isTombstone() || hasAccess());
       }
       match /permits/{docId} {
         allow read, delete: if isOwner(uid);
-        allow create, update: if isOwner(uid) && (isTombstone() || hasAccess());
+        allow create, update: if isOwner(uid) && notDeleted(uid) && (isTombstone() || hasAccess());
       }
       match /checklists/{docId} {
         allow read, delete: if isOwner(uid);
-        allow create, update: if isOwner(uid) && (isTombstone() || hasAccess());
+        allow create, update: if isOwner(uid) && notDeleted(uid) && (isTombstone() || hasAccess());
       }
     }
 
@@ -279,6 +286,8 @@ service cloud.firestore {
     match /driveTrash/{id}        { allow read, write: if false; }
     match /driveTotals/{id}       { allow read, write: if false; }
     match /adminLog/{id}          { allow read: if isAdmin(); allow write: if false; }
+    // Accounts deleted on request (a date only). Server only.
+    match /deletedAccounts/{uid}  { allow read, write: if false; }
 
     // Explicit default-deny for everything else.
     match /{document=**} { allow read, write: if false; }

@@ -288,7 +288,9 @@
         <div id="adminBody" hidden>
           <div class="toolbar">
             <input type="search" id="adminSearch" placeholder="Search email / uid / status…">
+            <button class="btn" id="adminSearchAll" type="button">Search all accounts</button>
             <div class="spacer"></div>
+            <label style="font-size:13px; display:flex; gap:6px; align-items:center;" title="When you delete an account, archive and keep the projects only that person belongs to instead of deleting them"><input type="checkbox" id="adminKeepSolo"> Keep their own projects archived</label>
             <button class="btn" id="adminRefresh">Refresh</button>
           </div>
           <div id="adminResult"></div>

@@ -213,11 +213,45 @@ async function signInsFor(uids) {
   return out;
 }
 
-// List accounts for the admin dashboard (paged). The email shown is the one
-// the person signs in with, from Firebase Auth, never the copy in their users
-// doc. createdAt is set by onUserCreate and the rules keep clients off it.
+// One row of the admin list: `u` is the users doc ({} when there is none),
+// `signIn` the Firebase Auth record (none when it was deleted).
+function userRow(uid, u, signIn) {
+  return {
+    uid,
+    email: (signIn && signIn.email) || null,
+    emailVerified: !!(signIn && signIn.emailVerified),
+    signInDeleted: !signIn,
+    role: u.role || 'user',
+    subscriptionStatus: u.subscriptionStatus || null,
+    trialEndsAt: u.trialEndsAt || null,
+    subscriptionExpiryMillis: u.subscriptionExpiryMillis || null,
+    adminGrantUntil: u.adminGrantUntil || null,
+    compForever: !!u.compForever,
+    subscriptionProvider: u.subscriptionProvider || null,
+    cancelAtPeriodEnd: !!u.cancelAtPeriodEnd,
+    createdAt: u.createdAt && u.createdAt.toMillis ? u.createdAt.toMillis() : null
+  };
+}
+
+// List accounts for the admin dashboard (paged), or with data.email the one
+// account that signs in with that address, however old. The email shown is
+// the one the person signs in with, from Firebase Auth, never the copy in
+// their users doc. createdAt is set by onUserCreate and the rules keep
+// clients off it.
 exports.adminListUsers = functions.https.onCall(async (data, context) => {
   await assertAdmin(context);
+  if (data && data.email != null) {
+    const email = normEmail(data.email);
+    if (!email || email.length > 320) return { users: [], count: 0 };
+    let signIn;
+    try { signIn = await admin.auth().getUserByEmail(email); }
+    catch (e) {
+      if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-email') return { users: [], count: 0 };
+      throw e;
+    }
+    const u = (await db.collection('users').doc(signIn.uid).get()).data() || {};
+    return { users: [userRow(signIn.uid, u, signIn)], count: 1 };
+  }
   const limit = Math.min(Number((data && data.limit) || 100), 500);
   let q = db.collection('users').orderBy('createdAt', 'desc').limit(limit);
   if (data && data.startAfterCreatedAt) {
@@ -225,40 +259,25 @@ exports.adminListUsers = functions.https.onCall(async (data, context) => {
   }
   const snap = await q.get();
   const signIns = await signInsFor(snap.docs.map((d) => d.id));
-  const users = snap.docs.map(d => {
-    const u = d.data();
-    const signIn = signIns.get(d.id);
-    return {
-      uid: d.id,
-      email: (signIn && signIn.email) || null,
-      emailVerified: !!(signIn && signIn.emailVerified),
-      signInDeleted: !signIn,
-      role: u.role || 'user',
-      subscriptionStatus: u.subscriptionStatus || null,
-      trialEndsAt: u.trialEndsAt || null,
-      subscriptionExpiryMillis: u.subscriptionExpiryMillis || null,
-      adminGrantUntil: u.adminGrantUntil || null,
-      compForever: !!u.compForever,
-      subscriptionProvider: u.subscriptionProvider || null,
-      cancelAtPeriodEnd: !!u.cancelAtPeriodEnd,
-      createdAt: u.createdAt && u.createdAt.toMillis ? u.createdAt.toMillis() : null
-    };
-  });
+  const users = snap.docs.map((d) => userRow(d.id, d.data(), signIns.get(d.id)));
   return { users, count: users.length };
 });
 
 // Delete an account when its owner asks: sign-in, profile, saved records,
-// project memberships and invites; their address is replaced by "deleted
-// user" in project history (see account-delete.js, docs/DEPLOY.md).
+// project memberships and invites, and the projects only they belong to;
+// their address is replaced by "deleted user" in project history (see
+// account-delete.js, docs/DEPLOY.md).
 // data: { targetUid, dryRun } to see what would happen, then
 //       { targetUid, confirm: <the account's email address> } to do it.
+//       keepSoloProjects: true archives their own projects instead.
 const { makeAccountDelete } = require('./account-delete');
 exports.adminDeleteAccount = functions.runWith({ timeoutSeconds: 540, memory: '512MB' }).https.onCall(async (data, context) => {
   try {
     const adminUid = await assertAdmin(context);
     const d = data || {};
-    return await makeAccountDelete({ db, FieldValue, auth: admin.auth() }).deleteAccount({
-      adminUid, targetUid: d.targetUid, confirm: d.confirm, dryRun: d.dryRun === true
+    return await makeAccountDelete({ db, FieldValue, auth: admin.auth(), drive: drive() }).deleteAccount({
+      adminUid, targetUid: d.targetUid, confirm: d.confirm, dryRun: d.dryRun === true,
+      keepSoloProjects: d.keepSoloProjects === true
     });
   } catch (err) { throw asHttpsError(err); }
 });
@@ -341,11 +360,13 @@ exports.projectSetMember = functions.https.onCall(async (data, context) => {
 });
 
 // Remove a member (data.uid) or cancel a pending invite (data.email).
+// Leaving a project yourself needs no subscription; the rest does.
 exports.projectRemoveMember = functions.https.onCall(async (data, context) => {
   try {
     if (!context.auth) throw new PlanError('unauthenticated', 'Sign in.');
     const callerUid = context.auth.uid;
     const { projectId, uid, email } = data || {};
+    if (uid !== callerUid) await assertSubscribed(context, 'manage a team');
     if (!projectId || typeof projectId !== 'string') throw new PlanError('invalid-argument', 'projectId is required.');
     const ref = db.collection('projects').doc(projectId);
     return await db.runTransaction(async (tx) => {
@@ -380,16 +401,20 @@ exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
     const inviteSnap = await inviteRef.get();
     const invites = (inviteSnap.exists && inviteSnap.data().invites) || {};
     const joined = [];
+    // Index entries that are done with: joined, cancelled, or the project is
+    // gone. An invite to an archived project stays, for when it reopens.
+    const settled = [];
     for (const projectId of Object.keys(invites)) {
       const ref = db.collection('projects').doc(projectId);
-      await db.runTransaction(async (tx) => {
+      const outcome = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
-        if (!snap.exists) return;
+        if (!snap.exists) return 'gone';
         const p = snap.data();
         // The project's own pending list is the source of truth: an invite
         // that was cancelled there is ignored.
         const invite = (p.pendingInvites || []).find((i) => i.email === email);
-        if (!invite || p.status === 'archived') return;
+        if (!invite) return 'cancelled';
+        if (p.status === 'archived') return 'waiting';
         const members = Object.assign({}, p.members);
         const memberEmails = Object.assign({}, p.memberEmails);
         if (!members[uid]) members[uid] = invite.role;
@@ -400,10 +425,22 @@ exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
           updatedAt: FieldValue.serverTimestamp(), updatedBy: uid
         });
         logActivity(tx, ref, uid, email, 'project.update', `${email} joined as ${invite.role}`);
-        joined.push(projectId);
+        return 'joined';
+      });
+      if (outcome === 'joined') joined.push(projectId);
+      if (outcome !== 'waiting') settled.push(projectId);
+    }
+    if (inviteSnap.exists) {
+      await db.runTransaction(async (tx) => {
+        const cur = await tx.get(inviteRef);
+        if (!cur.exists) return;
+        const left = Object.keys(cur.data().invites || {}).filter((pid) => !settled.includes(pid));
+        if (!left.length) tx.delete(inviteRef);
+        else if (settled.length) {
+          tx.set(inviteRef, { invites: Object.fromEntries(settled.map((pid) => [pid, FieldValue.delete()])) }, { merge: true });
+        }
       });
     }
-    if (inviteSnap.exists) await inviteRef.delete();
     return { joined, needsVerification: false };
   } catch (err) { throw asHttpsError(err); }
 });
