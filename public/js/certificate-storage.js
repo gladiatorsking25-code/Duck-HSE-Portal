@@ -5,6 +5,9 @@ const CertificateStore = (function () {
   const DB_BASE = 'cla_certificate_store_v1';
   const DB_VERSION = 1;
   const STORE = 'photos';
+  // Checklists deleted on another device while no page with this store was
+  // open (queued by js/cloud-sync.js): their photos go once it opens.
+  const PURGE_KEY = 'cla_cert_purge';
   let dbPromise = null;
   let dbName = null;
 
@@ -36,7 +39,32 @@ const CertificateStore = (function () {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error || new Error('Could not open certificate storage.'));
     });
+    dbPromise.then(() => drainPurge(name), () => {});
     return dbPromise;
+  }
+
+  // Deletes the photos of the checklists in the queue, except any that are
+  // back on this device (restored from a backup). Mid-swap the queue still
+  // belongs to the account leaving, so it waits for the next open. An id
+  // that fails stays queued for the next open.
+  function drainPurge(name) {
+    if (typeof DeviceData !== 'undefined' && DeviceData.pendingSwap()) return;
+    let ids;
+    try { ids = JSON.parse(localStorage.getItem(PURGE_KEY) || '[]'); } catch (e) { return; }
+    if (!Array.isArray(ids) || !ids.length) return;
+    const here = new Set(typeof DB !== 'undefined' ? DB.getChecklists().map(c => c.id) : []);
+    const done = [];
+    Promise.all(ids.map(id => (here.has(id) ? Promise.resolve() : deleteForChecklist(id))
+      .then(() => { done.push(id); }, e => console.warn('Could not remove certificate photos', e)))).then(() => {
+      if (currentName() !== name) return;   // another account's queue by now
+      let left = [];
+      try { left = JSON.parse(localStorage.getItem(PURGE_KEY) || '[]'); } catch (e) { /* rewritten below */ }
+      left = (Array.isArray(left) ? left : []).filter(id => done.indexOf(id) === -1);
+      try {
+        if (left.length) localStorage.setItem(PURGE_KEY, JSON.stringify(left));
+        else localStorage.removeItem(PURGE_KEY);
+      } catch (e) { /* tried again on the next open */ }
+    });
   }
 
   function putPhoto(item) {

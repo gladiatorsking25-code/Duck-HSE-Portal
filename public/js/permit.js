@@ -663,7 +663,8 @@ async function syncPermitToProject(p) {
                 status === 'suspended' ? `Suspended by ${p.ptwSuspendedBy || '?'}: ${p.suspensionReason || ''}` : '',
                 status === 'closed' && p.closeout ? `Closed by ${p.closeout.by}.` : ''].filter(Boolean).join(' ')
     });
-  if (!res.ok) alert('The permit was saved, but it could not be added to the project: ' + res.error);
+  if (!res.ok) alert('The permit was saved, but it could not be added to the project: ' + res.error +
+    (res.offline ? '. The project will be updated the next time you save the permit online.' : ''));
 }
 
 document.getElementById('btnPrint').addEventListener('click', () => window.print());

@@ -575,7 +575,8 @@
           location: rec.location || '',
           details: [`Inspected by ${rec.inspector || '?'} on ${rec.inspectionDate || '?'}.`, rec.remarks || ''].filter(Boolean).join(' ')
         });
-      if (!res.ok) linkError = ` Could not add it to the project: ${res.error}`;
+      if (!res.ok) linkError = ` Could not add it to the project: ${res.error}` +
+        (res.offline ? '. The project will be updated the next time you save it online.' : '');
     }
     certificates = persistedCertificates;
     certificatePhotos = {};

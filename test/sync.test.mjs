@@ -42,11 +42,13 @@ function makeStorage() {
 }
 
 // Just enough IndexedDB for DeviceData's stash: one store, get/put/delete,
-// completion events on a later tick. `failWrites` makes writes abort.
+// completion events on a later tick. `failWrites` makes writes abort, and
+// `stallWrites` makes them never finish (a completely full disk).
 function makeIndexedDB() {
   const dbs = new Map();
   const idb = {
     failWrites: false,
+    stallWrites: false,
     open(name) {
       const req = {};
       setTimeout(() => {
@@ -67,6 +69,7 @@ function makeIndexedDB() {
               delete(key) { ops.push(() => store.data.delete(key)); }
             });
             setTimeout(() => {
+              if (mode === 'readwrite' && idb.stallWrites) return;
               if (mode === 'readwrite' && idb.failWrites) { tx.error = new Error('disk full'); if (tx.onabort) tx.onabort(); return; }
               ops.forEach((op) => op());
               if (tx.oncomplete) tx.oncomplete();
@@ -108,6 +111,8 @@ function makeFirestore() {
         return () => { l.live = false; };
       },
       doc(id) {
+        // Like the SDK: an id that cannot name a document throws at once.
+        if (typeof id !== 'string' || id.includes('/')) throw new Error(`Invalid document reference: ${id}`);
         return {
           set(data, options) {
             return new Promise((resolve, reject) => writes.push({ path, id, data: clone(data), options, resolve, reject }));
@@ -144,7 +149,10 @@ function makeFirestore() {
 
 function browser({ firestore, uid = null } = {}) {
   const events = [];
-  const fb = firestore ? { firestore: firestore.firestore, apps: [1], auth: () => ({ currentUser: uid ? { uid } : null }) } : undefined;
+  const fb = firestore ? {
+    firestore: firestore.firestore, apps: [1],
+    auth: () => ({ currentUser: uid ? { uid } : null, signOut: async () => { events.push({ signOut: true }); } })
+  } : undefined;
   const ctx = {
     console: { log() {}, warn() {}, error() {} },
     setTimeout, clearTimeout,
@@ -173,6 +181,7 @@ test('DeviceData, DB and CloudSync agree on the storage keys', () => {
   const b = browser();
   same(b.DeviceData.LIST_KEYS.slice(0, 3), [b.DB.KEYS.assessments, b.DB.KEYS.permits, b.DB.KEYS.checklists]);
   assert.equal(b.DeviceData.LIST_KEYS[3], 'cla_sync_deletes');
+  assert.equal(b.DeviceData.LIST_KEYS[4], 'cla_cert_purge', 'photos to delete move with the account too');
   assert.equal(b.DeviceData.OWNER_KEY, b.DB.DEVICE_KEYS.owner);
   assert.equal(b.DeviceData.SWAP_KEY, b.DB.DEVICE_KEYS.swap);
   assert.equal(b.DeviceData.COUNTER_PREFIX, b.DB.KEYS.counter);
@@ -277,8 +286,20 @@ test('the first account to sign in adopts the records already on the device', as
   assert.equal(await b.DeviceData.claim('alice'), 'adopted');
   assert.equal(b.ls.getItem('cla_data_uid'), 'alice');
   assert.equal(b.ls.getItem('cla_data_legacy_uid'), 'alice');
-  same(list(b, 'cla_permits'), [{ id: 'P-old', location: 'old' }]);
+  same(list(b, 'cla_permits'), [{ id: 'P-old', location: 'old', _legacy: true }], 'marked as kept from before (see cloud-sync)');
   assert.equal(b.DeviceData.idbName('cla_audit_store_v1'), 'cla_audit_store_v1');
+  assert.equal(await b.DeviceData.claim('alice'), 'same');
+});
+
+test('on a nearly full device the marks never stop the first account adopting it', async () => {
+  const b = browser();
+  seed(b, 'old');
+  // Room for the owner keys, but not for them and the marks as well.
+  b.ls.setQuota(b.ls.used() + 'cla_data_uidalice'.length + 'cla_data_legacy_uidalice'.length + 10);
+  assert.equal(await b.DeviceData.claim('alice'), 'adopted');
+  assert.equal(b.ls.getItem('cla_data_uid'), 'alice');
+  assert.equal(b.ls.getItem('cla_data_legacy_uid'), 'alice');
+  same(b.DB.getPermits().map((p) => p.id), ['P-old'], 'the records are all still here');
   assert.equal(await b.DeviceData.claim('alice'), 'same');
 });
 
@@ -310,14 +331,47 @@ test('another account signing in parks the records and gets them back later, unt
   same(b.DB.getChecklists().map((c) => c.id), ['C-bob'], 'and Bob gets his back');
 });
 
-test('if the records cannot be parked, nothing moves and the sign-in is refused', async () => {
+test('if the records cannot be parked, nothing moves and they stay hidden', async () => {
   const b = browser();
   seed(b, 'alice');
   await b.DeviceData.claim('alice');
   b.idb.failWrites = true;
   assert.equal(await b.DeviceData.claim('bob'), 'failed');
   assert.equal(b.ls.getItem('cla_data_uid'), 'alice');
+  same(JSON.parse(b.ls.getItem('cla_data_swap')), { from: 'alice', to: 'bob', parked: false });
+  same(b.DB.getPermits(), [], 'Bob does not see Alice\'s permits');
+  assert.equal(b.DB.savePermit({ id: 'P-bob' }), null, 'nor write into her lists');
+  assert.equal(b.DB.nextPermitNumber('hot_work'), '', 'nor take her issuer code');
+  same(list(b, 'cla_permits').map((p) => p.id), ['P-alice'], 'nothing moved');
+  // Alice signing in again gets them back as they were.
+  assert.equal(await b.DeviceData.claim('alice'), 'same');
   assert.equal(b.ls.getItem('cla_data_swap'), null);
+  same(b.DB.getPermits().map((p) => p.id), ['P-alice']);
+  // Another account's sign-in starts again from the marker once it can, and
+  // from the start its pages open its own databases, not Bob's.
+  assert.equal(await b.DeviceData.claim('bob'), 'failed');
+  assert.equal(b.DeviceData.idbName('cla_audit_store_v1'), 'cla_audit_store_v1:bob');
+  b.idb.failWrites = false;
+  b.ctx.navigator.locks = { request: (name, fn) => tick().then(fn) };   // the lock comes a moment later
+  const carol = b.DeviceData.claim('carol');
+  assert.equal(b.DeviceData.idbName('cla_audit_store_v1'), 'cla_audit_store_v1:carol');
+  assert.equal(await carol, 'switched');
+  assert.equal(b.ls.getItem('cla_data_uid'), 'carol');
+  same(b.DB.getPermits(), []);
+  assert.equal(await b.DeviceData.claim('alice'), 'switched');
+  same(b.DB.getPermits().map((p) => p.id), ['P-alice']);
+});
+
+test('a stash that stops responding fails the claim instead of hiding the records for good', async () => {
+  const b = browser();
+  seed(b, 'alice');
+  await b.DeviceData.claim('alice');
+  b.ctx.setTimeout = (fn, ms) => setTimeout(fn, Math.min(ms, 20));   // the watchdog's wait, shortened
+  b.idb.stallWrites = true;
+  assert.equal(await b.DeviceData.claim('bob'), 'failed');
+  same(b.DB.getPermits(), [], 'still hidden from Bob');
+  b.idb.stallWrites = false;
+  assert.equal(await b.DeviceData.claim('alice'), 'same');
   same(b.DB.getPermits().map((p) => p.id), ['P-alice']);
 });
 
@@ -330,10 +384,13 @@ test('if the incoming records do not fit, the parked ones are put back', async (
   b.ls.setQuota(b.ls.used() + 1000);
   assert.equal(await b.DeviceData.claim('bob'), 'failed');
   assert.equal(b.ls.getItem('cla_data_uid'), 'alice');
-  assert.equal(b.ls.getItem('cla_data_swap'), null);
-  same(b.DB.getPermits().map((p) => p.id), ['P-alice']);
+  same(JSON.parse(b.ls.getItem('cla_data_swap')), { from: 'alice', to: 'bob', parked: false });
+  same(b.DB.getPermits(), [], 'hidden from Bob');
+  same(list(b, 'cla_permits').map((p) => p.id), ['P-alice']);
   assert.equal(b.ls.getItem('cla_permit_counter_hot_work'), '4');
   assert.ok(b.idb.stash('bob'), 'Bob\'s records are still parked');
+  assert.equal(await b.DeviceData.claim('alice'), 'same');
+  same(b.DB.getPermits().map((p) => p.id), ['P-alice']);
 });
 
 test('a swap cut short by a closed tab is finished on the next claim', async () => {
@@ -436,7 +493,7 @@ async function signedIn(uid = 'alice') {
 test('sync pulls checklists too, and re-sends what never reached the account', async () => {
   const b = await signedIn();
   b.DB.saveChecklist({ id: 'C-offline', assetNo: 'saved offline' });   // before sync started: stays pending
-  b.ls.setItem('cla_assessments', JSON.stringify([{ id: 'A-old', updatedAt: 1 }]));   // from before sync existed
+  b.ls.setItem('cla_assessments', JSON.stringify([{ id: 'A-old', updatedAt: 1 }]));   // from before the device had an owner
   b.fs.put(b.path('checklists'), 'C-cloud', { assetNo: 'from another device', updatedAt: 50 });
   await b.CloudSync.start('alice');
   await settle();
@@ -450,13 +507,43 @@ test('sync pulls checklists too, and re-sends what never reached the account', a
   b.fs.emit(b.path('checklists'));
   b.fs.emit(b.path('assessments'));
   b.fs.emit(b.path('permits'));
-  same(b.fs.writes.map((w) => w.id).sort(), ['A-old', 'C-offline']);
+  same(b.fs.writes.map((w) => w.id), ['C-offline'], 'A-old stays on this device until edited');
   assert.equal(b.fs.writes.find((w) => w.id === 'C-offline').data._pending, undefined, 'the flag stays on the device');
   assert.equal(b.fs.writes[0].options, undefined, 'records are written whole');
   await b.fs.ack();
   assert.equal(b.DB.getChecklists().find((c) => c.id === 'C-offline')._pending, undefined, 'no longer pending');
   b.fs.emit(b.path('checklists'));
   assert.equal(b.fs.writes.length, 0, 're-sent once only');
+});
+
+test('records from before the device had an owner stay on it until edited', async () => {
+  const b = await signedIn();
+  // P-old was deleted on another device before deletes reached other
+  // devices (or is the last person's); P-both is in the account too.
+  b.ls.setItem('cla_permits', JSON.stringify([{ id: 'P-old', location: 'Berth 1', updatedAt: 1 }, { id: 'P-both', updatedAt: 2 }]));
+  b.fs.put(b.path('permits'), 'P-both', { id: 'P-both', updatedAt: 1 });
+  await b.CloudSync.start('alice');
+  await settle();
+  b.fs.emit(b.path('permits'));
+  same(b.fs.writes.map((w) => w.id), ['P-both'], 'a newer copy of a record the account has is still sent');
+  assert.equal(b.fs.writes[0].data._legacy, undefined, 'the mark stays on the device');
+  await b.fs.ack();
+  same(b.DB.getPermits().map((p) => p.id).sort(), ['P-both', 'P-old'], 'still listed here');
+  assert.ok(b.DB.exportAll().permits.every((p) => !('_legacy' in p)), 'backups leave the mark out');
+  b.CloudSync.stop();
+  await b.CloudSync.start('alice');   // the next page
+  await settle();
+  b.fs.emit(b.path('permits'));
+  assert.equal(b.fs.writes.length, 0, 'P-old is not copied into the account');
+  // Edited here: now it is the account's.
+  b.DB.savePermit(Object.assign(b.DB.getPermits().find((p) => p.id === 'P-old'), { location: 'Berth 2' }));
+  same(b.fs.writes.map((w) => w.id), ['P-old']);
+  assert.equal(b.fs.writes[0].data.location, 'Berth 2');
+  assert.equal(b.fs.writes[0].data._legacy, undefined);
+  await b.fs.ack();
+  const stored = list(b, 'cla_permits').find((p) => p.id === 'P-old');
+  assert.equal(stored._legacy, undefined);
+  assert.equal(stored._pending, undefined);
 });
 
 test('a save is pending until the server confirms it, and flush waits for it', async () => {
@@ -484,6 +571,11 @@ test('a save is pending until the server confirms it, and flush waits for it', a
   older.forEach((w) => w.resolve());
   await settle();
   assert.equal(b.DB.getPermits()[0]._pending, true);
+  // Offline the server cannot confirm anything: flush does not wait.
+  b.ctx.navigator.onLine = false;
+  const t0 = Date.now();
+  assert.equal(await b.CloudSync.flush(1000), false);
+  assert.ok(Date.now() - t0 < 500);
 });
 
 test('deletes are tombstones, queued until the server has them', async () => {
@@ -526,6 +618,22 @@ test('sync never mixes accounts: another account\'s snapshots and pushes are ign
   same(b.DB.getPermits(), [], 'Alice\'s cloud records do not land in Bob\'s lists');
   b.DB.savePermit({ id: 'P-bob' });
   assert.equal(b.fs.writes.length, 0, 'Bob\'s record is not sent to Alice\'s account');
+});
+
+test('start signs out when another account\'s records cannot be put aside', async () => {
+  const b = await signedIn('bob');
+  b.ls.setItem('cla_data_uid', 'alice');
+  b.ls.setItem('cla_permits', JSON.stringify([{ id: 'P-alice' }]));
+  b.ls.setItem('cla_sync_deletes', JSON.stringify([{ c: 'permits', id: 'P-x', at: 1 }]));
+  b.idb.failWrites = true;
+  await b.CloudSync.start('bob');
+  await settle();
+  assert.ok(b.events.some((e) => e.signOut), 'signed out, so the sign-in page takes over');
+  assert.equal(b.fs.listeners.length, 0, 'nothing is synced');
+  same(b.DB.getPermits(), [], 'Alice\'s permit stays hidden');
+  b.DB.deletePermit('P-alice');
+  same(list(b, 'cla_permits').map((p) => p.id), ['P-alice'], 'and cannot be deleted');
+  same(list(b, 'cla_sync_deletes').map((e) => e.id), ['P-x'], 'nor queued for deletion from her account');
 });
 
 test('start puts another account\'s records aside before merging', async () => {
@@ -598,4 +706,173 @@ test('a lapsed account stops re-sending after the rules refuse a write', async (
   assert.equal(b.fs.writes.length, 0);
   b.DB.deletePermit('P-1');
   assert.equal(b.fs.writes.length, 1, 'deletes are still sent');
+});
+
+test('a record whose id Firestore cannot take does not hold up the rest', async () => {
+  const b = await signedIn();
+  b.ls.setItem('cla_data_uid', 'alice');
+  b.ls.setItem('cla_permits', JSON.stringify([
+    { id: 'P-1/2', updatedAt: 1, _pending: true }, { id: 7, updatedAt: 1, _pending: true }, { id: 'P-3', updatedAt: 1, _pending: true }
+  ]));
+  b.ls.setItem('cla_sync_deletes', JSON.stringify([{ c: 'permits', id: 'P-4/5', at: 2 }, { c: 'permits', id: 'P-6', at: 2 }]));
+  await b.CloudSync.start('alice');
+  await settle();
+  b.fs.emit(b.path('permits'));
+  same(b.fs.writes.map((w) => w.id), ['P-3', 'P-6'], 'the good record and the good delete are still sent');
+  same(list(b, 'cla_sync_deletes').map((e) => e.id), ['P-6'], 'the bad delete is dropped from the queue');
+  same(b.DB.getPermits().map((p) => p.id), ['P-1/2', 7, 'P-3'], 'and nothing is lost on the device');
+});
+
+test('a checklist deleted on another device takes its certificate photos with it', async () => {
+  const b = await signedIn();
+  b.ls.setItem('cla_data_uid', 'alice');
+  b.ls.setItem('cla_checklists', JSON.stringify([{ id: 'C-1', updatedAt: 1 }, { id: 'C-2', updatedAt: 1 }, { id: 'C-3', updatedAt: 1 }]));
+  await b.CloudSync.start('alice');
+  await settle();
+  b.fs.put(b.path('checklists'), 'C-1', { deleted: true, updatedAt: 5 });
+  b.fs.put(b.path('checklists'), 'C-2', { id: 'C-2', updatedAt: 1 });
+  b.fs.put(b.path('checklists'), 'C-3', { id: 'C-3', updatedAt: 1 });
+  b.fs.emit(b.path('checklists'));
+  same(b.DB.getChecklists().map((c) => c.id), ['C-2', 'C-3']);
+  same(list(b, 'cla_cert_purge'), ['C-1'], 'no photo store on this page: queued for it');
+  const purged = [];
+  b.ctx.CertificateStore = { deleteForChecklist: (id) => { purged.push(id); return Promise.reject(new Error('busy')); } };
+  b.fs.put(b.path('checklists'), 'C-2', { deleted: true, updatedAt: 5 });
+  b.fs.emit(b.path('checklists'));
+  await settle();
+  same(purged, ['C-2'], 'with the photo store here, deleted at once');
+  same(list(b, 'cla_cert_purge'), ['C-1']);
+  b.DB.deleteChecklist('C-3');   // deleted here: checklists.html deletes the photos itself
+  b.fs.put(b.path('checklists'), 'C-3', { deleted: true, updatedAt: Date.now() + 1000 });
+  b.fs.emit(b.path('checklists'));
+  same(purged, ['C-2']);
+});
+
+// ---- certificate-storage.js: photos of checklists deleted elsewhere ------------
+
+// Just enough IndexedDB for CertificateStore: one photo store with a
+// checklistId index.
+function photoIndexedDB(photos) {
+  const data = new Map(photos.map((p) => [p.id, p]));
+  const db = {
+    objectStoreNames: { contains: () => true },
+    close() {},
+    transaction() {
+      const tx = {};
+      tx.objectStore = () => ({
+        get(id) { const req = {}; setTimeout(() => { req.result = data.get(id); req.onsuccess(); }, 0); return req; },
+        index: () => ({
+          openCursor(range) {
+            const req = {};
+            const hits = [...data.values()].filter((p) => p.checklistId === range.only);
+            const next = () => setTimeout(() => {
+              const p = hits.shift();
+              req.result = p ? { delete: () => data.delete(p.id), continue: next } : null;
+              req.onsuccess();
+              if (!p && tx.oncomplete) tx.oncomplete();
+            }, 0);
+            next();
+            return req;
+          }
+        })
+      });
+      return tx;
+    }
+  };
+  return { data, open() { const req = {}; setTimeout(() => { req.result = db; req.onsuccess(); }, 0); return req; } };
+}
+
+test('the photo store deletes the queued photos when it opens, unless the checklist is back', async () => {
+  const idb = photoIndexedDB([{ id: 'ph1', checklistId: 'C-gone' }, { id: 'ph2', checklistId: 'C-back' }, { id: 'ph3', checklistId: 'C-kept' }]);
+  const ctx = {
+    console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout,
+    localStorage: makeStorage(), indexedDB: idb, IDBKeyRange: { only: (v) => ({ only: v }) }, navigator: {}
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  ['storage.js', 'firebase-auth.js', 'certificate-storage.js'].forEach((f) => vm.runInContext(source(f), ctx, { filename: f }));
+  const store = vm.runInContext('CertificateStore', ctx);
+  const ls = ctx.localStorage;
+  ls.setItem('cla_data_uid', 'alice');
+  ls.setItem('cla_data_legacy_uid', 'alice');
+  ls.setItem('cla_checklists', JSON.stringify([{ id: 'C-back' }, { id: 'C-kept' }]));
+  ls.setItem('cla_cert_purge', JSON.stringify(['C-gone', 'C-back']));
+  // Mid-swap the queue belongs to the account leaving: left alone.
+  ls.setItem('cla_data_swap', JSON.stringify({ from: 'alice', to: 'bob', parked: false }));
+  await store.getPhoto('ph3');
+  await settle();
+  same([...idb.data.keys()], ['ph1', 'ph2', 'ph3']);
+  ls.removeItem('cla_data_swap');
+  assert.equal((await store.getPhoto('ph3')).id, 'ph3');
+  await settle();
+  same([...idb.data.keys()], ['ph2', 'ph3'], 'only the deleted checklist\'s photos go');
+  assert.equal(ls.getItem('cla_cert_purge'), null, 'and the queue is empty');
+});
+
+// ---- project-link.js: linked project items are never created from the offline copy ----
+
+// Projects and ProjectLink with a scripted Firestore holding one project's
+// items. `getError` makes the item lookup fail as the SDK does offline.
+function projectLinkBrowser({ online = true, existing = null, getError = null } = {}) {
+  const calls = [];
+  const items = {
+    where() { return items; },
+    limit() { return items; },
+    async get(options) {
+      calls.push({ get: clone(options) });
+      if (getError) throw getError;
+      return existing ? { empty: false, docs: [{ id: existing.id, data: () => clone(existing) }] } : { empty: true, docs: [] };
+    },
+    async add(data) { calls.push({ add: clone(data) }); return { id: 'I-new' }; },
+    doc(id) {
+      return {
+        get: async () => ({ data: () => clone(existing) }),
+        update: async (data) => { calls.push({ update: id, data: clone(data) }); }
+      };
+    }
+  };
+  const activity = { add: async () => ({ id: 'act' }) };
+  const firestore = () => ({ collection: () => ({ doc: () => ({ collection: (n) => (n === 'items' ? items : activity) }) }) });
+  firestore.FieldValue = { serverTimestamp: () => 'now' };
+  const ctx = {
+    console: { log() {}, warn() {}, error() {} }, clearTimeout,
+    setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); t.unref(); return t; },   // ProjectLink's 10 s limit
+    navigator: { onLine: online },
+    FIREBASE_READY: true, firebaseReadyPromise: Promise.resolve(),
+    firebase: { firestore, auth: () => ({ currentUser: { uid: 'u1', email: 'u1@example.com' } }) }
+  };
+  vm.createContext(ctx);
+  ['projects.js', 'project-link.js'].forEach((f) => vm.runInContext(source(f), ctx, { filename: f }));
+  return { ctx, calls, ProjectLink: vm.runInContext('ProjectLink', ctx) };
+}
+
+test('a linked record looks its project item up on the server, and offline adds nothing', async () => {
+  const ref = { kind: 'permit', id: 'P-1', label: 'Hot work permit HW-1' };
+  const input = { title: 'Hot work permit HW-1: welding', status: 'in_progress' };
+
+  let b = projectLinkBrowser();
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: true });
+  same(b.calls[0], { get: { source: 'server' } }, 'never decided from the offline copy');
+  assert.equal(b.calls[1].add.title, input.title);
+
+  b = projectLinkBrowser({ existing: { id: 'I-1', ref, title: 'old', status: 'open' } });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: true });
+  assert.equal(b.calls[1].update, 'I-1', 'the item already there is updated');
+  assert.ok(!b.calls.some((c) => c.add));
+
+  // Offline: nothing is looked up or queued, and the page is told why.
+  b = projectLinkBrowser({ online: false });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: false, offline: true, error: 'you are offline' });
+  same(b.calls, []);
+
+  // The connection drops without the browser noticing: the server lookup
+  // fails, and still nothing is added.
+  const err = Object.assign(new Error('Failed to get documents from server.'), { code: 'unavailable' });
+  b = projectLinkBrowser({ getError: err });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: false, offline: true, error: 'you are offline' });
+  assert.ok(!b.calls.some((c) => c.add || c.update));
+
+  // Other errors are passed on as they are.
+  b = projectLinkBrowser({ getError: Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' }) });
+  same(await b.ProjectLink.sync('proj', ref, input), { ok: false, error: 'Missing or insufficient permissions.' });
 });
