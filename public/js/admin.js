@@ -144,7 +144,7 @@
   }
 
   function render() {
-    const q = ($('adminSearch').value || '').toLowerCase();
+    const q = ($('adminSearch').value || '').trim().toLowerCase();
     const list = allUsers.filter(u => {
       if (!q) return true;
       return `${u.email || ''} ${u.uid} ${u.subscriptionStatus || ''} ${u.role || ''}`.toLowerCase().includes(q);

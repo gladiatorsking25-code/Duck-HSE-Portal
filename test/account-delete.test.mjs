@@ -472,3 +472,46 @@ test('without a subscription you can leave a project, but not remove others or c
   assert.deepEqual(await fns().projectRemoveMember.run({ projectId: 'pT', uid: 'vi' }, as('own', 'own@example.com')), { status: 'removed' });
   assert.deepEqual((await get('projects/pT')).memberUids, ['lapsed', 'own']);
 });
+
+test('the admin finds any account by its full address, in the same shape as the list', { skip }, async () => {
+  const f = fns();
+  // index.js asks the default app's Auth; answer for it without an Auth emulator.
+  const auth = require('firebase-admin').auth();
+  const signIns = {
+    old1: { uid: 'old1', email: 'old@example.com', emailVerified: true },
+    new1: { uid: 'new1', email: 'new@example.com', emailVerified: false }
+  };
+  const saved = { getUserByEmail: auth.getUserByEmail, getUsers: auth.getUsers };
+  auth.getUserByEmail = async (email) => {
+    if (!/^[^@\s]+@[^@\s]+$/.test(email)) throw Object.assign(new Error('bad address'), { code: 'auth/invalid-email' });
+    const r = Object.values(signIns).find((s) => s.email === email);
+    if (!r) throw Object.assign(new Error('no such user'), { code: 'auth/user-not-found' });
+    return r;
+  };
+  auth.getUsers = async (ids) => ({ users: ids.map(({ uid }) => signIns[uid]).filter(Boolean), notFound: [] });
+  try {
+    await db.doc('users/adm').set({ role: 'admin' });
+    await db.doc('users/old1').set({
+      role: 'user', subscriptionStatus: 'expired', trialEndsAt: NOW - DAY,
+      createdAt: FieldValue.serverTimestamp()
+    });
+    await db.doc('users/new1').set({ role: 'user', createdAt: FieldValue.serverTimestamp() });
+    const adm = as('adm', 'adm@example.com');
+
+    const found = await f.adminListUsers.run({ email: '  Old@Example.com ' }, adm);
+    assert.equal(found.count, 1);
+    assert.equal(found.users[0].uid, 'old1');
+    assert.equal(found.users[0].email, 'old@example.com');
+    const listed = await f.adminListUsers.run({ limit: 10 }, adm);
+    assert.equal(listed.count, 2);
+    assert.deepEqual(found.users[0], listed.users.find((u) => u.uid === 'old1'));
+
+    assert.deepEqual(await f.adminListUsers.run({ email: 'nobody@example.com' }, adm), { users: [], count: 0 });
+    assert.deepEqual(await f.adminListUsers.run({ email: 'not an address' }, adm), { users: [], count: 0 });
+    assert.deepEqual(await f.adminListUsers.run({ email: '' }, adm), { users: [], count: 0 });
+    await assert.rejects(f.adminListUsers.run({ email: 'old@example.com' }, as('old1', 'old@example.com')),
+      (e) => e.code === 'permission-denied');
+  } finally {
+    Object.assign(auth, saved);
+  }
+});
