@@ -82,9 +82,18 @@ whose trial hasn't been stamped yet reads as `pending` = access, so signup never
 bounces to the paywall during the one-second window before the trigger runs.)
 
 The model chosen here is **free trial → all paid**: a new account gets
-`TRIAL_DAYS` of full access, after which the whole app is gated behind the
-paywall (`subscribe.html`) until there is an active subscription or an admin
-grant.
+`TRIAL_DAYS` of full access. After the trial or a subscription ends (or an
+admin revokes the account), the dashboard and every tool route to the paywall
+(`subscribe.html`) until there is an active subscription or an admin grant.
+Projects, a project and Settings stay open **read-only**, so nobody loses sight
+of their records: those pages call `requireAccess({ allowLapsed: true })`
+(`READ_ONLY_PAGES` in `js/access.js`), hide every control that changes data,
+and still let the account view, download and export. That is only the UX
+layer. `firestore.rules` still requires `hasAccess()` for every create and
+update; the one exception is a tombstone (`{ deleted: true, updatedAt }`) that
+marks one of the account's own records deleted. The Cloud Functions that
+change shared data (team membership, project files and backups) check
+`assertSubscribed` on the server.
 
 ---
 
@@ -95,14 +104,14 @@ grant.
 | Real accounts (email/password) | `js/firebase-auth.js` + Firebase Auth | client + Google |
 | Trial started on signup | `onUserCreate` in `functions/index.js` | server |
 | Access decision | `js/entitlements.js` | client (reads server truth) |
-| Page gate + routing to login/paywall | `js/access.js` (`requireAccess`) | client |
+| Page gate, read-only mode + routing to login/paywall | `js/access.js` (`requireAccess`) | client |
 | Paywall | `subscribe.html` + `js/billing.js` | client |
 | Purchase → verify → entitlement (Android) | `verifyPlayPurchase` | server |
 | Card checkout and billing portal (web) | `stripeCreateCheckout`, `stripePortal` | server |
 | Stripe → entitlement (signature-checked) | `stripeWebhook` | server |
 | Real-time renew/cancel | `playRTDN` | server |
 | Owner admin dashboard | `admin.html` + `js/admin.js` | client |
-| Admin grant/revoke/extend/role | `adminSetSubscription`, `adminSetRole`, `adminListUsers` | server |
+| Admin grant/revoke/extend/role, account deletion | `adminSetSubscription`, `adminSetRole`, `adminListUsers`, `adminDeleteAccount` | server |
 | The real boundary | `firestore.rules` | server |
 
 If `js/firebase-config.js` has no real config, `requireAccess()` fails closed:
