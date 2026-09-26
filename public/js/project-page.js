@@ -40,8 +40,11 @@
       d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   }
   function today() { return new Date().toISOString().slice(0, 10); }
-  function canEdit() { return Projects.can.edit(project, uid); }
-  function canManage() { return Projects.can.manage(project, uid); }
+  // False while the account has no current access (access.js allowLapsed):
+  // the project is then shown read-only, whatever your role.
+  function writable() { return !(typeof Access !== 'undefined' && Access.readOnly); }
+  function canEdit() { return writable() && Projects.can.edit(project, uid); }
+  function canManage() { return writable() && Projects.can.manage(project, uid); }
   function isOwner() { return Projects.roleIn(project, uid) === 'owner'; }
 
   // ---- Options that don't depend on data --------------------------------------
@@ -97,14 +100,23 @@
   }
 
   // ---- Items table --------------------------------------------------------------
+  // Open work first: overdue, then by priority and due date; closed items last.
+  function sortItems(list) {
+    const t = today();
+    const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+    return list.slice().sort((a, b) =>
+      (a.status === 'closed') - (b.status === 'closed') ||
+      Projects.isOverdue(b, t) - Projects.isOverdue(a, t) ||
+      (rank[a.priority] - rank[b.priority]) ||
+      String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
+  }
   function filteredItems() {
     const q = $('itemSearch').value.trim().toLowerCase();
     const st = $('itemStatus').value;
     const ty = $('itemType').value;
     const mine = $('onlyMine').checked;
     const t = today();
-    const rank = { critical: 0, high: 1, medium: 2, low: 3 };
-    return items.filter((i) => {
+    return sortItems(items.filter((i) => {
       if (st === 'notclosed' && i.status === 'closed') return false;
       if (st === 'overdue' && !Projects.isOverdue(i, t)) return false;
       if (st && !['notclosed', 'overdue'].includes(st) && i.status !== st) return false;
@@ -112,11 +124,7 @@
       if (mine && i.assigneeUid !== uid) return false;
       if (q && !`${i.title} ${i.details || ''} ${i.location || ''} ${i.ref ? i.ref.label : ''}`.toLowerCase().includes(q)) return false;
       return true;
-    }).sort((a, b) =>
-      (a.status === 'closed') - (b.status === 'closed') ||
-      Projects.isOverdue(b, t) - Projects.isOverdue(a, t) ||
-      (rank[a.priority] - rank[b.priority]) ||
-      String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')));
+    }));
   }
 
   function renderItems() {
@@ -161,7 +169,7 @@
     const members = Object.entries(project.members || {}).sort((a, b) => roleRank[a[1]] - roleRank[b[1]]);
     $('memberList').innerHTML = members.map(([mUid, role]) => {
       // Owners manage everyone; managers manage editors and viewers.
-      const manageable = mUid !== uid && role !== 'owner' &&
+      const manageable = writable() && mUid !== uid && role !== 'owner' &&
         (mine === 'owner' || (mine === 'manager' && ['editor', 'viewer'].includes(role)));
       const roleOpts = (mine === 'owner' ? ['manager', 'editor', 'viewer'] : ['editor', 'viewer'])
         .map((r) => `<option value="${r}"${r === role ? ' selected' : ''}>${esc(Projects.ROLES[r])}</option>`).join('');
@@ -259,8 +267,10 @@
     $('itemSaveBtn').hidden = readOnly;
     $('itemDeleteBtn').hidden = !item || !canManage() || project.status === 'archived';
     const refPage = { permit: 'permit.html?mode=view&id=', assessment: 'history.html?id=', checklist: 'checklist.html?id=' };
+    // Your own record opens on its page, which needs a current subscription.
+    const ownRef = item && item.ref && item.createdBy === uid && writable();
     $('itemRef').innerHTML = item && item.ref
-      ? `Linked ${esc(item.ref.kind)}: ${item.createdBy === uid ? `<a href="${refPage[item.ref.kind] || '#'}${encodeURIComponent(item.ref.id)}">${esc(item.ref.label)}</a>` : esc(item.ref.label)}` : '';
+      ? `Linked ${esc(item.ref.kind)}: ${ownRef ? `<a href="${refPage[item.ref.kind] || '#'}${encodeURIComponent(item.ref.id)}">${esc(item.ref.label)}</a>` : esc(item.ref.label)}` : '';
     $('itemMeta').textContent = item
       ? `Added by ${who(item.createdBy)} on ${fmtWhen(Projects.millis(item.createdAt))}. Last updated by ${who(item.updatedBy)} on ${fmtWhen(Projects.millis(item.updatedAt))}.`
       : '';
@@ -272,6 +282,7 @@
   $('addItemBtn').addEventListener('click', () => openItemModal(null));
   $('itemForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!canEdit()) return;
     $('itemSaveBtn').disabled = true;
     try {
       await Projects.saveItem(projectId, editingItem && editingItem.id, Object.assign({}, editingItem || {}, {
@@ -306,6 +317,7 @@
   }
   $('projectForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!canManage()) return;
     const drive = $('pDrive').value.trim();
     if (drive && !/^https:\/\/drive\.google\.com\//.test(drive)) {
       banner($('projectFormError'), 'danger', 'The Drive link must start with https://drive.google.com/');
@@ -334,14 +346,33 @@
   });
 
   // ---- Export ----------------------------------------------------------------------
+  // The whole register, closed items included, whatever the filters show.
   $('exportBtn').addEventListener('click', () => {
-    const csv = Projects.itemsCsv(project, filteredItems());
+    const csv = Projects.itemsCsv(project, sortItems(items));
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     a.download = (project.number || project.name).replace(/[^\w.-]+/g, '_').slice(0, 60) + '_items.csv';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
+
+  // ---- Read-only mode ------------------------------------------------------------------
+  // An account whose trial or subscription has ended can still open the
+  // project, download files and backups and export items, but not change
+  // anything. Access can also end, or start, while the page is open.
+  if (typeof Access !== 'undefined' && Access.onReadOnlyChange) {
+    Access.readOnlyBanner($('readOnlyBanner'));
+    Access.onReadOnlyChange(() => {
+      if (!project) return;
+      renderHead(); renderTeam(); renderItems();
+      $('projectModal').hidden = true;
+      if (!$('itemModal').hidden) {
+        if (editingItem) openItemModal(items.find((i) => i.id === editingItem.id) || editingItem);
+        else $('itemModal').hidden = true;
+      }
+      ProjectFiles.onProject();
+    });
+  }
 
   // ---- Load --------------------------------------------------------------------------
   if (!projectId) { banner($('notice'), 'danger', 'No project selected.'); return; }

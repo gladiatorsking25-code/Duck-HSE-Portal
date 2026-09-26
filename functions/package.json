@@ -2,7 +2,7 @@
   "name": "functions",
   "description": "Play Billing subscription verification for Duck HSE Portal",
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "index.js",
   "dependencies": {

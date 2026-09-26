@@ -61,10 +61,18 @@ decide access are written **exclusively by Cloud Functions** (Admin SDK):
 |---|---|---|
 | `role` | admin bootstrap / `adminSetRole` | `admin` = full access always |
 | `trialStartedAt` / `trialEndsAt` | `onUserCreate` | the free-trial window |
-| `subscriptionStatus` | `verifyPlayPurchase` / RTDN / `stripeWebhook` | `active`, `in_grace`, `expired`, … |
-| `subscriptionExpiryMillis` | `verifyPlayPurchase` / RTDN / `stripeWebhook` | when paid access ends |
+| `subscriptionStatus` | `verifyPlayPurchase` / RTDN / `stripeWebhook` / `stripeCreateCheckout` (repairs a missed webhook) / `adminSetSubscription` | `active`, `in_grace`, `expired`, `revoked`, … |
+| `subscriptionExpiryMillis` | `verifyPlayPurchase` / RTDN / `stripeWebhook` / `stripeCreateCheckout` (repairs a missed webhook) | when paid access ends |
 | `subscriptionProvider`, `stripeCustomerId`, `stripeSubscriptionId`, `cancelAtPeriodEnd` | `verifyPlayPurchase` / `stripeCreateCheckout` / `stripeWebhook` | which store the plan is with, and the Stripe references |
 | `adminGrantUntil` / `compForever` | `adminSetSubscription` | a manual owner grant |
+
+**One Google Play subscription unlocks one account.** A Play purchase belongs
+to the Google account that paid, and "Restore purchases" sends every purchase
+on the phone to whichever account is signed in. So `verifyPlayPurchase`
+records the first account that verifies a purchase token in
+`purchaseTokens/{token}` and refuses that token, or a newer token that replaced
+it (`linkedPurchaseToken`), for any other account (`functions/play.js`). An
+admin **revoke** stands whatever Google Play or Stripe report later.
 
 `js/entitlements.js` (`computeAccess`) reads that doc and returns the state, in
 priority order: **admin → manual grant → active subscription → free trial →
@@ -74,9 +82,21 @@ whose trial hasn't been stamped yet reads as `pending` = access, so signup never
 bounces to the paywall during the one-second window before the trigger runs.)
 
 The model chosen here is **free trial → all paid**: a new account gets
-`TRIAL_DAYS` of full access, after which the whole app is gated behind the
-paywall (`subscribe.html`) until there is an active subscription or an admin
-grant.
+`TRIAL_DAYS` of full access. After the trial or a subscription ends (or an
+admin revokes the account), the dashboard and every tool route to the paywall
+(`subscribe.html`) until there is an active subscription or an admin grant.
+Projects, a project and Settings stay open **read-only**, so nobody loses sight
+of their records: those pages call `requireAccess({ allowLapsed: true })`
+(`READ_ONLY_PAGES` in `js/access.js`), hide every control that changes data,
+and still let the account view, download and export. That is only the UX
+layer. `firestore.rules` still requires `hasAccess()` to create or update
+personal records and project data; the one exception is a tombstone
+(`{ deleted: true, updatedAt }`) that marks one of the account's own records
+deleted. (The account's own `users/{uid}` doc stays writable for its name and
+consent record.) The Cloud Functions that invite, change or remove team
+members, add or delete project files, or back up or restore a project check
+`assertSubscribed` on the server; joining a project from an invite and leaving
+one need no subscription.
 
 ---
 
@@ -87,14 +107,14 @@ grant.
 | Real accounts (email/password) | `js/firebase-auth.js` + Firebase Auth | client + Google |
 | Trial started on signup | `onUserCreate` in `functions/index.js` | server |
 | Access decision | `js/entitlements.js` | client (reads server truth) |
-| Page gate + routing to login/paywall | `js/access.js` (`requireAccess`) | client |
+| Page gate, read-only mode + routing to login/paywall | `js/access.js` (`requireAccess`) | client |
 | Paywall | `subscribe.html` + `js/billing.js` | client |
 | Purchase → verify → entitlement (Android) | `verifyPlayPurchase` | server |
 | Card checkout and billing portal (web) | `stripeCreateCheckout`, `stripePortal` | server |
 | Stripe → entitlement (signature-checked) | `stripeWebhook` | server |
 | Real-time renew/cancel | `playRTDN` | server |
 | Owner admin dashboard | `admin.html` + `js/admin.js` | client |
-| Admin grant/revoke/extend/role | `adminSetSubscription`, `adminSetRole`, `adminListUsers` | server |
+| Admin grant/revoke/extend/role, account deletion | `adminSetSubscription`, `adminSetRole`, `adminListUsers`, `adminDeleteAccount` | server |
 | The real boundary | `firestore.rules` | server |
 
 If `js/firebase-config.js` has no real config, `requireAccess()` fails closed:
@@ -117,25 +137,57 @@ credentials. Here is the exact sequence:
    real-accounts-only.)
 5. **Google Play**: register the developer account, create the subscription
    products with IDs matching `PRODUCTS` in `js/subscription-config.js`
-   (`pro_monthly`, `pro_yearly` by default).
+   (`pro_monthly` by default). The server accepts only the IDs listed in
+   `PLAY_PRODUCT_IDS` in `functions/.env` (default `pro_monthly`), and checks
+   purchases against its own `PLAY_PACKAGE_NAME` (default `Duck.HSE.Portal`,
+   the `packageId` in `twa-manifest.json`).
 6. **Google Cloud Console** (same project): enable the *Google Play Android
    Developer API*.
 7. **Play Console → Setup → API access**: link the Cloud project and give the
-   Functions runtime service account the *View financial data* permission.
+   Functions runtime service account (`<project-id>@appspot.gserviceaccount.com`)
+   the *View financial data* and *Manage orders and subscriptions*
+   permissions. The second lets the server acknowledge each purchase; Google
+   refunds a purchase nobody acknowledges within 3 days.
 8. **Deploy functions**: `firebase deploy --only functions`.
 9. **Make yourself the first admin** — this is the one manual step, done with
    console rights so it can't be self-served: Firebase Console → Firestore →
    `users/<your uid>` → add field **`role` = `admin`** (String). Now `admin.html`
    works for you and you can grant admin to others from the dashboard.
-10. **Real-time notifications (recommended):** Play Console → Monetization setup →
-    create a Pub/Sub topic named `play-rtdn` (matches `RTDN_TOPIC`), so cancels
-    and renewals reflect immediately.
-11. **App Check (recommended hardening):** enable App Check (Play Integrity) in
-    Firebase and enforce it on Firestore + Functions, so only your genuine app —
-    not a scripted client with your public config — can call the backend.
+10. **Real-time developer notifications (required for Google Play):** a
+    renewal keeps the same purchase token, so this is how renewals,
+    cancellations and refunds reach the account. Without it a paying Play
+    customer is locked out at each renewal until the app next checks Google
+    Play.
+    1. Step 8 created the Pub/Sub topic `play-rtdn` (it matches `RTDN_TOPIC`
+       in `functions/index.js`).
+    2. Let Google Play publish to it: Google Cloud Console → **Pub/Sub →
+       Topics → play-rtdn → Permissions → Add principal**:
+       `google-play-developer-notifications@system.gserviceaccount.com`, role
+       **Pub/Sub Publisher**. Or, with the gcloud tool:
+       ```
+       gcloud pubsub topics add-iam-policy-binding play-rtdn --project=<project-id> \
+         --member=serviceAccount:google-play-developer-notifications@system.gserviceaccount.com \
+         --role=roles/pubsub.publisher
+       ```
+    3. Play Console → **Monetization setup** (under Monetize) → **Real-time
+       developer notifications**: turn them on, enter the topic name
+       `projects/<project-id>/topics/play-rtdn`, and **Save**.
+    4. Press **Send test notification**, then check
+       `firebase functions:log --only playRTDN` shows `Play notification ignored`
+       (the test message carries no purchase, so it is logged and ignored).
+11. **App Check: not set up. Do not enforce it.** The app has no App Check code,
+    so enforcing App Check on Firestore or Functions in the Firebase console
+    would reject every request from the website and the Android app and lock
+    every customer out. (Play Integrity does not cover the Android app either:
+    it is web content.) Adding it later means, in this order: add the App Check
+    web SDK with a reCAPTCHA Enterprise provider to `js/firebase-init.js` and
+    allow its addresses in the Content-Security-Policy in `.htaccess`, deploy,
+    watch the App Check metrics until almost all requests are verified, and
+    only then enforce.
 
-Keep the four version numbers in step on every release (`js/app-version.js`,
-`sw.js` `CACHE_VERSION`, and `twa-manifest.json` — currently **1.4.0 / build 6**).
+Keep the version numbers in step on every release (`js/app-version.js`,
+`sw.js` `CACHE_VERSION`, and `twa-manifest.json`); `node tools/check-deploy.mjs`
+catches a mismatch.
 
 ---
 
@@ -151,7 +203,14 @@ Because the live Firebase/Play paths need your project, verify these once it's o
       reopening the app routes to `subscribe.html`.
 - [ ] Buy a subscription in the Android app → `verifyPlayPurchase` sets
       `subscriptionStatus: active` and access returns.
+- [ ] Sign in to the Android app as a second account on the same phone and tap
+      **Restore purchases** → refused ("linked to another Duck HSE account");
+      the second account stays locked.
+- [ ] Let a tester subscription renew (every 5 minutes for license testers) →
+      `subscriptionExpiryMillis` moves forward without opening the app (RTDN).
 - [ ] Cancel in Play → the RTDN function flips status without you reopening.
+- [ ] Revoke a Play subscriber from `admin.html`, then renew or restore → the
+      account stays revoked.
 - [ ] `admin.html` loads only for a `role: admin` account; a normal account sees
       "Not authorized"; the callables reject a non-admin even if they call them
       directly.

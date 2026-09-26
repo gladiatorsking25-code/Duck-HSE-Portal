@@ -580,7 +580,8 @@ body.has-offline-bar { padding-bottom: 46px; }
    controls get a minimum 44px target as the platform guidelines ask. */
 @media (pointer: coarse) {
   input[type=text], input[type=number], input[type=date],
-  input[type=datetime-local], input[type=search], input[type=password],
+  input[type=datetime-local], input[type=month], input[type=search],
+  input[type=email], input[type=url], input[type=tel], input[type=password],
   select, textarea { font-size: 16px; min-height: 44px; }
   .btn { min-height: 44px; }
   .btn-sm { min-height: 38px; }

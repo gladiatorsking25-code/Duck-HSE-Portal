@@ -43,7 +43,7 @@ const emulatorPatch = `
 export const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 export async function newUser() {
   const ctx = await browser.newContext({ serviceWorkers: 'block' });
-  await ctx.addInitScript(() => localStorage.setItem('cla_tos_privacy_accepted_v1', JSON.stringify({ version: '2026-09-24.3', acceptedAt: new Date().toISOString() })));
+  await ctx.addInitScript(() => localStorage.setItem('cla_tos_privacy_accepted_v1', JSON.stringify({ version: '2026-09-25', acceptedAt: new Date().toISOString() })));
   await ctx.route(/gstatic\.com\/firebasejs\/.*\/(firebase-[a-z-]+-compat\.js)$/, async (route) => {
     const name = route.request().url().split('/').pop();
     let body = await readFile(path.join(sdk, name), 'utf8');
@@ -86,6 +86,7 @@ export async function signUp(page, email) {
   await page.goto(BASE + 'login.html');
   await page.waitForSelector('#cloudSection:not([hidden])');
   await page.click('#toggleModeLink');
+  await page.check('#termsAccept');
   await page.fill('#cloudEmail', email);
   await page.fill('#cloudPassword', 'correct-horse-battery');
   await page.click('#cloudSubmitBtn');

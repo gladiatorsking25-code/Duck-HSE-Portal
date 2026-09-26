@@ -68,10 +68,33 @@ test('placeholder settings and mismatches are reported', () => {
   rmSync(dir, { recursive: true });
 });
 
+test('a www. APP_ORIGIN is flagged, since the website sends www. to the bare address', () => {
+  const dir = fakeRepo(Object.assign({}, GOOD, {
+    'functions/.env': 'APP_ORIGIN=https://www.example.com\nSTRIPE_PRICE_MONTHLY=price_123abc\nDRIVE_ROOT_FOLDER_ID=0ABCdef\n'
+  }));
+  const r = checkAll(dir);
+  assert.deepEqual(r.errors, []);
+  assert.match(r.warnings.join('\n'), /APP_ORIGIN is https:\/\/www\.example\.com.*Set APP_ORIGIN to https:\/\/example\.com,/);
+  rmSync(dir, { recursive: true });
+});
+
 test('the deploy target must be the project the website uses', () => {
   const dir = fakeRepo(Object.assign({}, GOOD, { '.firebaserc': '{"projects":{"default":"other-proj"}}' }));
   assert.match(checkAll(dir).errors.join('\n'), /deploys to "other-proj" but the website is set up for "my-proj"/);
   rmSync(dir, { recursive: true });
+});
+
+test('a placeholder in the Android app links file is flagged, a real fingerprint is not', () => {
+  const links = (print) => JSON.stringify([{ relation: ['delegate_permission/common.handle_all_urls'],
+    target: { namespace: 'android_app', package_name: 'Duck.HSE.Portal', sha256_cert_fingerprints: [print] } }]);
+  const real = Array.from({ length: 32 }, (_, i) => (i * 7 % 256).toString(16).padStart(2, '0').toUpperCase()).join(':');
+  for (const [body, flagged] of [[links('REPLACE_WITH_PLAY_APP_SIGNING_SHA256'), true], ['not json', true], ['[]', true], [links(real), false]]) {
+    const dir = fakeRepo(Object.assign({}, GOOD, { 'public/.well-known/assetlinks.json': body }));
+    const r = checkAll(dir);
+    assert.equal(/assetlinks\.json still has a placeholder fingerprint/.test(r.warnings.join('\n')), flagged, body);
+    assert.deepEqual(r.errors, []);
+    rmSync(dir, { recursive: true });
+  }
 });
 
 // Reads a zip back with nothing but Node, to prove the archive is well formed.

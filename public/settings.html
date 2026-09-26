@@ -9,7 +9,7 @@
 <script src="js/subscription-config.js"></script>
 <script src="js/entitlements.js"></script>
 <script src="js/access.js"></script>
-<script>requireAccess();</script>
+<script>requireAccess({ allowLapsed: true });</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Settings & Backup · Duck HSE Portal</title>
@@ -40,6 +40,7 @@
     </div>
 
     <div class="content">
+      <div id="readOnlyBanner" hidden></div>
       <div id="disclaimer-banner"></div>
 
       <div class="section-title" style="margin-top:0;">Backup & restore</div>
@@ -52,9 +53,9 @@
         </p>
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
           <button class="btn btn-primary" id="btnExport">Export backup (.json)</button>
-          <label class="btn" style="cursor:pointer;">
+          <label class="btn" style="cursor:pointer;" id="importLabel">
             Import backup
-            <input type="file" id="fileImport" accept="application/json" style="display:none;">
+            <input type="file" id="fileImport" accept="application/json,.json" style="display:none;">
           </label>
           <a class="btn btn-danger" href="account-deletion.html">Erase data on this device…</a>
         </div>
@@ -64,19 +65,14 @@
       <div class="section-title">Crane fleet for lift planning</div>
       <div class="grid grid-2" id="fleetCards"></div>
 
-      <div class="section-title">Adding or editing crane models</div>
+      <div class="section-title">Adding a crane or correcting a load chart</div>
       <div class="card">
         <p style="margin:0; color:var(--ink-soft); font-size:13.5px;">
-          Crane specifications and load charts live in <code>js/crane-data.js</code> in the repository.
-          Each model is a plain JS object with <code>maxCapacity</code>, <code>boomLengths</code>, a
-          <code>loadCharts</code> table of <em>configuration → boom length → radius → capacity (kg)</em>,
-          and — where the crane has one — a <code>jibCharts</code> table of <em>configuration → jib
-          length → offset angle → boom angle → capacity (kg)</em>, since manufacturer jib charts are
-          normally indexed by boom angle rather than radius. A top-level <code>DATA_NOTES</code> array
-          flags any spots transcribed exactly as printed in the source PDF that are still worth a second
-          look (e.g. duplicate tables or a highlighted cell in the manufacturer's own document). Edit
-          <code>crane-data.js</code> with your crane's certified figures, commit, and every page picks up
-          the change — there's no database migration involved.
+          The cranes above are the ones set up in the portal for lift planning. To have a crane added, or a
+          figure in a load chart corrected, contact support at <span id="craneSupport">the address on the
+          <a href="about.html">About &amp; legal</a> page</span>. Send the crane's make and model and a copy of
+          the manufacturer's current load chart (and jib chart, if it has one). Always check the figures for a
+          lift against the load chart supplied with the crane itself.
         </p>
       </div>
 
@@ -85,8 +81,27 @@
   </div>
 </div>
 
+<!-- Import: merge or replace -->
+<div class="modal-backdrop" id="importModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="importTitle">
+    <div class="modal-head"><h3 id="importTitle" style="margin:0;">Import backup</h3><button class="close-x" type="button" data-import-cancel aria-label="Close">×</button></div>
+    <div class="modal-body">
+      <p id="importFileSummary" style="margin-top:0; overflow-wrap:anywhere;"></p>
+      <p style="font-size:13.5px;"><strong>Merge</strong> adds the records in the file that are not on this device yet. Nothing already here is changed.</p>
+      <p style="font-size:13.5px; margin-bottom:0;"><strong>Replace</strong> removes the records on this device first and puts back the versions in the file, also in your account. Use it to go back to an earlier backup. Records saved in your account that are not in the file are not deleted there, and they come back when this device next syncs.</p>
+      <div id="importReplaceWarn" class="banner banner-danger" style="margin:14px 0 0;" hidden></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" type="button" id="importReplaceBtn" style="margin-right:auto;">Replace…</button>
+      <button class="btn" type="button" data-import-cancel>Cancel</button>
+      <button class="btn btn-primary" type="button" id="importMergeBtn">Merge</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/crane-data.js"></script>
 <script src="js/storage.js"></script>
+<script src="js/backup-import.js"></script>
 <script src="js/cloud-sync.js"></script>
 <script src="js/nav.js"></script>
 <script>
@@ -147,22 +162,101 @@ document.getElementById('btnExport').addEventListener('click', () => {
   a.click();
 });
 
-document.getElementById('fileImport').addEventListener('change', (e) => {
+// ---- Import a backup ---------------------------------------------------------
+// The file is checked first, then the person chooses Merge or Replace in a
+// window where Cancel changes nothing and Replace asks a second time.
+const $ = (id) => document.getElementById(id);
+let pendingImport = null;   // the checked file, while the window is open
+let replaceArmed = false;   // Replace pressed once; the next press does it
+
+function importBanner(kind, text) {
+  const host = $('importResult');
+  host.innerHTML = '';
+  if (!text) return;
+  const d = document.createElement('div');
+  d.className = 'banner banner-' + kind;
+  d.textContent = text;
+  host.appendChild(d);
+}
+
+function openImport(data, fileName) {
+  pendingImport = data;
+  replaceArmed = false;
+  $('importFileSummary').textContent = `${fileName} has ${BackupImport.describe(BackupImport.countsOf(data))}.`;
+  $('importReplaceWarn').hidden = true;
+  $('importReplaceBtn').textContent = 'Replace…';
+  $('importModal').hidden = false;
+  $('importMergeBtn').focus();
+}
+function closeImport() {
+  $('importModal').hidden = true;
+  pendingImport = null;
+  replaceArmed = false;
+}
+
+async function runImport(mode) {
+  const data = pendingImport;
+  closeImport();
+  if (!data || Access.readOnly) return;
+  importBanner('info', 'Importing…');
+  try {
+    const counts = BackupImport.resultCounts(await DB.importAll(data, mode), data);
+    importBanner('ok', mode === 'replace'
+      ? `Backup restored: ${BackupImport.describe(counts)} imported, in place of the records that were on this device.`
+      : `Backup merged: ${BackupImport.describe(counts)} imported. Records already on this device were kept as they were.`);
+  } catch (err) {
+    importBanner('danger', 'The backup could not be imported: ' + ((err && err.message) || 'please try again.'));
+  }
+}
+
+$('fileImport').addEventListener('change', (e) => {
   const file = e.target.files[0];
-  if (!file) return;
+  e.target.value = '';   // so choosing the same file again still works
+  if (!file || Access.readOnly) return;
+  importBanner('', '');
   const reader = new FileReader();
   reader.onload = () => {
-    try {
-      const data = JSON.parse(reader.result);
-      const mode = confirm('Click OK to MERGE with existing data, or Cancel to REPLACE all existing data with this backup.') ? 'merge' : 'replace';
-      DB.importAll(data, mode);
-      document.getElementById('importResult').innerHTML = `<div class="banner banner-ok">Import complete (${mode}). ${((data.assessments||[]).length)} assessments, ${((data.permits||[]).length)} permits in the file.</div>`;
-    } catch (err) {
-      document.getElementById('importResult').innerHTML = `<div class="banner banner-danger">Could not read that file: ${String(err.message).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
-    }
+    let data;
+    try { data = JSON.parse(reader.result); }
+    catch (err) { importBanner('danger', 'Could not read that file. Choose a backup file saved with "Export backup" (.json).'); return; }
+    const checked = BackupImport.check(data);
+    if (!checked.ok) { importBanner('danger', checked.error); return; }
+    openImport(data, file.name);
   };
+  reader.onerror = () => importBanner('danger', 'Could not read that file from this device.');
   reader.readAsText(file);
 });
+
+$('importMergeBtn').addEventListener('click', () => runImport('merge'));
+$('importReplaceBtn').addEventListener('click', () => {
+  if (replaceArmed) { runImport('replace'); return; }
+  replaceArmed = true;
+  const here = BackupImport.countsOf(DB.exportAll());
+  const warn = $('importReplaceWarn');
+  warn.textContent = `Are you sure? The ${BackupImport.describe(here)} on this device will be removed, and only the records ` +
+    'in the file kept. Export a backup first if you might need them. Press "Yes, replace" to go ahead, or Cancel.';
+  warn.hidden = false;
+  $('importReplaceBtn').textContent = 'Yes, replace';
+});
+$('importModal').addEventListener('click', (e) => {
+  if (e.target === $('importModal') || e.target.closest('[data-import-cancel]')) closeImport();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('importModal').hidden) closeImport(); });
+
+// An account without access keeps Export, but cannot import.
+Access.readOnlyBanner($('readOnlyBanner'));
+Access.onReadOnlyChange((ro) => {
+  $('importLabel').hidden = ro;
+  if (ro) closeImport();
+});
+
+// Where to ask for a crane to be added or corrected.
+if (typeof APP_PUBLISHER !== 'undefined' && APP_PUBLISHER.email) {
+  const a = document.createElement('a');
+  a.href = 'mailto:' + APP_PUBLISHER.email + '?subject=' + encodeURIComponent('Crane data request');
+  a.textContent = APP_PUBLISHER.email;
+  $('craneSupport').replaceChildren(a);
+}
 
 </script>
 <script src="js/pwa.js"></script>

@@ -90,10 +90,16 @@ async function makeProject(pid, extra = {}) {
   }, extra));
 }
 const pdf = (bytes) => Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(bytes - 9, 32)]);
-const send = (pd, uid, pid, name, buf, input = {}) => pd.uploadFile({
-  uid, email: uid + '@example.com', projectId: pid, input: Object.assign({ name, size: buf.length }, input), data: buf.toString('base64')
+const send = (pd, uid, pid, name, buf, input = {}, emailVerified = true) => pd.uploadFile({
+  uid, email: uid + '@example.com', emailVerified, projectId: pid, input: Object.assign({ name, size: buf.length }, input), data: buf.toString('base64')
+});
+// An account that pays (the rest have no users doc, like an account on the trial).
+const paying = (uid, clock) => db.collection('users').doc(uid).set({
+  subscriptionStatus: 'active', subscriptionExpiryMillis: clock.t + 30 * DAY, trialEndsAt: clock.t - DAY
 });
 const usage = async (col, id) => (await db.collection(col).doc(id).get()).data() || {};
+// A manager's Back up now or Restore items call, from a verified address.
+const by = (uid, extra = {}) => Object.assign({ uid, email: uid + '@example.com', emailVerified: true, projectId: 'p1' }, extra);
 const refused = (re) => (e) => e instanceof Error && re.test(e.message);
 
 test('an upload is stored in the project folder and counted for the project and the person', { skip }, async () => {
@@ -110,6 +116,7 @@ test('an upload is stored in the project folder and counted for the project and 
   assert.equal(folders.usedBytes, 1000);
   assert.equal(folders.fileCount, 1);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 1000, fileCount: 1 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 1000, fileCount: 1 });
   const back = await pd.downloadFile({ uid: 'view', projectId: 'p1', fileId: r.id });
   assert.equal(Buffer.from(back.data, 'base64').length, 1000);
   await assert.rejects(pd.downloadFile({ uid: 'stranger', projectId: 'p1', fileId: r.id }), refused(/not a member/));
@@ -129,13 +136,128 @@ test('two uploads at once cannot both slip under the project limit', { skip }, a
 });
 
 test('one person cannot get round the space limit by spreading files over projects', { skip }, async () => {
-  const { pd } = setup({ DRIVE_USER_QUOTA_MB: '1' });
+  const { pd, clock } = setup({ DRIVE_USER_QUOTA_MB: '1' });
+  await paying('ed', clock);
   await makeProject('p1');
   await makeProject('p2');
   await send(pd, 'ed', 'p1', 'a.pdf', pdf(700000));
   await assert.rejects(send(pd, 'ed', 'p2', 'b.pdf', pdf(700000)), refused(/across your projects/));
   // Someone else in the same project is not held back by it.
   await send(pd, 'man', 'p2', 'c.pdf', pdf(700000));
+});
+
+test('an account whose email address is not verified cannot add files', { skip }, async () => {
+  const { pd, calls } = setup();
+  await makeProject('p1');
+  await assert.rejects(send(pd, 'ed', 'p1', 'a.pdf', pdf(1000), {}, false), refused(/Verify your email address before adding files/));
+  // Not saying counts as not verified.
+  await assert.rejects(pd.uploadFile({ uid: 'ed', projectId: 'p1', input: { name: 'a.pdf', size: 1000 }, data: pdf(1000).toString('base64') }),
+    refused(/Verify your email address/));
+  assert.deepEqual(calls.upload, []);
+  assert.equal((await db.doc('driveUsers/ed').get()).exists, false);
+});
+
+test('a free trial gets a small personal space; paying lifts it to the full space', { skip }, async () => {
+  const { pd, clock } = setup({ DRIVE_TRIAL_QUOTA_MB: '1' });
+  await makeProject('p1');
+  await makeProject('p2');
+  await db.doc('users/ed').set({ subscriptionStatus: 'trial', trialEndsAt: clock.t + 10 * DAY });
+  await send(pd, 'ed', 'p1', 'a.pdf', pdf(700000));
+  await assert.rejects(send(pd, 'ed', 'p2', 'b.pdf', pdf(700000)), refused(/During the free trial each person can add up to 1\.0 MB of files, and you have added 0\.7 MB.*Subscribe/));
+  // An admin grant counts as paying; so does a subscription.
+  await db.doc('users/ed').set({ adminGrantUntil: clock.t + DAY }, { merge: true });
+  await send(pd, 'ed', 'p2', 'b.pdf', pdf(700000));
+  await db.doc('users/ed').set({ adminGrantUntil: clock.t - 1 }, { merge: true });
+  await assert.rejects(send(pd, 'ed', 'p2', 'c.pdf', pdf(100)), refused(/free trial/));
+  await paying('ed', clock);
+  await send(pd, 'ed', 'p2', 'c.pdf', pdf(100));
+  assert.equal((await usage('driveUsers', 'ed')).usedBytes, 1400100);
+});
+
+test('the whole portal has a ceiling, kept in step with uploads, failures and emptied trash', { skip }, async () => {
+  const { pd, clock, fail } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await makeProject('p1');
+  await makeProject('p2');
+  const r = await send(pd, 'ed', 'p1', 'a.pdf', pdf(600000));
+  await assert.rejects(send(pd, 'man', 'p2', 'b.pdf', pdf(600000)), (e) => e.code === 'resource-exhausted' && /file storage is full/.test(e.message));
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 600000, fileCount: 1 });
+  assert.equal((await usage('driveUsers', 'man')).usedBytes, undefined);
+
+  // A failed upload gives its share back.
+  fail.upload = () => true;
+  await assert.rejects(send(pd, 'man', 'p2', 'c.pdf', pdf(1000)), /Drive said no/);
+  fail.upload = null;
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 600000, fileCount: 1 });
+
+  // A deleted file keeps counting until Drive's trash has emptied.
+  await pd.deleteFile({ uid: 'ed', email: 'ed@example.com', projectId: 'p1', fileId: r.id });
+  assert.equal((await usage('driveTotals', 'all')).usedBytes, 600000);
+  clock.t += 31 * DAY;
+  assert.equal(await pd.releaseTrash(), 1);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
+  await send(pd, 'man', 'p2', 'b.pdf', pdf(600000));
+});
+
+test('the portal-wide count starts from the space projects already use', { skip }, async () => {
+  const { pd, clock } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await paying('ed', clock);
+  await paying('man', clock);
+  await makeProject('p1');
+  await makeProject('p2');
+  // Files added before the count existed.
+  await db.doc('driveFolders/p1').set({ usedBytes: 900000, fileCount: 3 });
+  await db.doc('driveFolders/p2').set({ usedBytes: 50000, fileCount: 1 });
+  await Promise.all([send(pd, 'ed', 'p1', 'a.pdf', pdf(40000)), send(pd, 'man', 'p2', 'b.pdf', pdf(40000))]);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 1030000, fileCount: 6 });
+  await assert.rejects(send(pd, 'ed', 'p1', 'c.pdf', pdf(40000)), refused(/file storage is full/));
+});
+
+test('accounts on the trial may fill only 80% of the portal; paying accounts get the rest', { skip }, async () => {
+  const { pd, clock, calls } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await paying('man', clock);
+  await makeProject('p1');
+  await send(pd, 'ed', 'p1', 'a.pdf', pdf(600000));
+  // 600,000 + 300,000 bytes is past 80% of 1 MB (838,861 bytes).
+  await assert.rejects(send(pd, 'ed', 'p1', 'b.pdf', pdf(300000)),
+    (e) => e.code === 'resource-exhausted' && /File storage for trial accounts is full right now.*Subscribing/.test(e.message));
+  assert.equal(calls.upload.length, 1);
+  await send(pd, 'man', 'p1', 'b.pdf', pdf(300000));
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 900000, fileCount: 2 });
+  // Once it pays, the same account can use the rest too.
+  await paying('ed', clock);
+  await send(pd, 'ed', 'p1', 'c.pdf', pdf(100000));
+});
+
+test('emptied trash does not bring back the count of a deleted account', { skip }, async () => {
+  const { pd, clock } = setup();
+  await makeProject('p1');
+  const r = await send(pd, 'ed', 'p1', 'a.pdf', pdf(5000));
+  await pd.deleteFile({ uid: 'man', email: 'man@example.com', projectId: 'p1', fileId: r.id });
+  await db.doc('driveUsers/ed').delete();
+  clock.t += 31 * DAY;
+  assert.equal(await pd.releaseTrash(), 1);
+  assert.equal((await db.doc('driveUsers/ed').get()).exists, false);
+  assert.equal((await usage('driveFolders', 'p1')).usedBytes, 0);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
+});
+
+test('emptied trash of a project deleted by hand gives back only the uploader\'s space', { skip }, async () => {
+  const { pd, clock } = setup();
+  await makeProject('p1');
+  await makeProject('p2');
+  const r = await send(pd, 'ed', 'p1', 'a.pdf', pdf(5000));
+  await send(pd, 'ed', 'p2', 'b.pdf', pdf(700));
+  await pd.deleteFile({ uid: 'ed', email: 'ed@example.com', projectId: 'p1', fileId: r.id });
+  // The runbook: delete the project's driveFolders record and take what it
+  // held (the trashed file included) off the portal's count.
+  await db.doc('driveFolders/p1').delete();
+  await db.doc('driveTotals/all').set({ usedBytes: 700, fileCount: 1 });
+  clock.t += 31 * DAY;
+  assert.equal(await pd.releaseTrash(), 1);
+  assert.equal((await db.doc('driveFolders/p1').get()).exists, false);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 700, fileCount: 1 });
+  assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 700, fileCount: 1 });
+  assert.equal((await db.collection('driveTrash').get()).size, 0);
 });
 
 test('file-count limits: 5,000 per project and 20,000 per person', { skip }, async () => {
@@ -169,6 +291,7 @@ test('a deleted file keeps its space for 30 days, then the nightly job frees it'
   assert.equal(folders.usedBytes, 0);
   assert.equal(folders.fileCount, 0);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 0, fileCount: 0 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
 });
 
 test('editors delete only their own files; archived projects keep theirs', { skip }, async () => {
@@ -188,6 +311,7 @@ test('a failed Drive upload gives the reserved space back', { skip }, async () =
   await assert.rejects(send(pd, 'ed', 'p1', 'a.pdf', pdf(1000)), /Drive said no/);
   assert.equal((await usage('driveFolders', 'p1')).usedBytes, 0);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 0, fileCount: 0 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
 });
 
 test('a failed record write trashes the Drive file and gives the space back', { skip }, async () => {
@@ -201,6 +325,7 @@ test('a failed record write trashes the Drive file and gives the space back', { 
   assert.equal((await db.collection('projects/p1/files').get()).size, 0);
   assert.equal((await usage('driveFolders', 'p1')).usedBytes, 0);
   assert.deepEqual(await usage('driveUsers', 'ed'), { usedBytes: 0, fileCount: 0 });
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 0, fileCount: 0 });
 });
 
 test('a Drive error while making folders is retried without making the folder twice', { skip }, async () => {
@@ -229,21 +354,167 @@ test('Back up now and Restore items work once a minute per project', { skip }, a
   const { pd, clock } = setup();
   await makeProject('p1');
   await db.doc('projects/p1/items/i1').set({ type: 'action', title: 'Barrier', status: 'open' });
-  const b1 = await pd.backupNow({ uid: 'man', email: 'man@example.com', projectId: 'p1' });
-  await assert.rejects(pd.backupNow({ uid: 'man', projectId: 'p1' }), refused(/less than a minute ago/));
-  await assert.rejects(pd.backupNow({ uid: 'ed', projectId: 'p1' }), refused(/Only the owner or a manager/));
+  const b1 = await pd.backupNow(by('man'));
+  await assert.rejects(pd.backupNow(by('man')), refused(/less than a minute ago/));
+  await assert.rejects(pd.backupNow(by('ed')), refused(/Only the owner or a manager/));
   clock.t += 61000;
-  await pd.backupNow({ uid: 'own', projectId: 'p1' });
+  await pd.backupNow(by('own'));
 
   await db.doc('projects/p1/items/i2').set({ type: 'action', title: 'Added later', status: 'open' });
-  const r = await pd.restoreItems({ uid: 'man', projectId: 'p1', backupId: b1.id });
+  const r = await pd.restoreItems(by('man', { backupId: b1.id }));
   assert.deepEqual([r.restored, r.removed], [1, 1]);
   assert.ok(r.restorePointId);
-  await assert.rejects(pd.restoreItems({ uid: 'man', projectId: 'p1', backupId: b1.id }), refused(/restore was started less than a minute/));
+  await assert.rejects(pd.restoreItems(by('man', { backupId: b1.id })), refused(/restore was started less than a minute/));
   assert.deepEqual((await db.collection('projects/p1/items').get()).docs.map((d) => d.id), ['i1']);
   clock.t += 61000;
   await db.doc('projects/p1').update({ status: 'archived' });
-  await assert.rejects(pd.restoreItems({ uid: 'man', projectId: 'p1', backupId: b1.id }), refused(/archived/));
+  await assert.rejects(pd.restoreItems(by('man', { backupId: b1.id })), refused(/archived/));
+});
+
+test('Back up now and Restore items need a verified email address', { skip }, async () => {
+  const { pd, calls } = setup();
+  await makeProject('p1');
+  await assert.rejects(pd.backupNow(by('man', { emailVerified: false })), refused(/Verify your email address before backing up a project/));
+  // Not saying counts as not verified.
+  await assert.rejects(pd.backupNow({ uid: 'man', projectId: 'p1' }), refused(/Verify your email address/));
+  await assert.rejects(pd.restoreItems(by('man', { emailVerified: false, backupId: 'b1' })), refused(/Verify your email address before restoring a backup/));
+  assert.deepEqual(calls.upload, []);
+  assert.equal((await db.doc('driveFolders/p1').get()).exists, false);
+});
+
+test('Back up now and Restore items together work ten times a day per project', { skip }, async () => {
+  const { pd, clock } = setup();
+  await makeProject('p1');
+  await makeProject('p2');
+  const first = await pd.backupNow(by('man'));
+  for (let i = 0; i < 8; i++) { clock.t += 61000; await pd.backupNow(by('man')); }
+  clock.t += 61000;
+  await pd.restoreItems(by('man', { backupId: first.id }));
+  clock.t += 61000;
+  await assert.rejects(pd.backupNow(by('man')), refused(/backed up or restored 10 times today.*04:00 UAE time/));
+  await assert.rejects(pd.restoreItems(by('man', { backupId: first.id })), refused(/10 times today/));
+  // Another project, and the nightly run, are not held back.
+  await pd.backupNow(by('man', { projectId: 'p2' }));
+  await db.doc('projects/p1/items/i1').set({ type: 'action', title: 'Barrier', status: 'open' });
+  assert.equal((await pd.runBackup('p1', { kind: 'auto' })).skipped, false);
+  // A new UTC day starts the count again.
+  clock.t = Date.UTC(2026, 8, 25, 0, 0, 1);
+  await pd.backupNow(by('man'));
+});
+
+test('a backup counts towards the project and the portal, never a person, and gives it back if Drive fails', { skip }, async () => {
+  const { pd, fail, stored } = setup();
+  await makeProject('p1');
+  await db.doc('projects/p1/items/i1').set({ type: 'action', title: 'Barrier', status: 'open' });
+  const b = await pd.backupNow(by('man'));
+  const size = (await db.doc(`projects/p1/backups/${b.id}`).get()).data().size;
+  assert.ok(size > 100);
+  assert.equal((await usage('driveFolders', 'p1')).usedBytes, size);
+  assert.equal((await usage('driveFolders', 'p1')).fileCount, undefined);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: size, fileCount: 0 });
+  assert.equal((await db.doc('driveUsers/man').get()).exists, false);
+
+  // A failed upload gives its share back.
+  fail.upload = () => true;
+  await assert.rejects(pd.runBackup('p1', { kind: 'manual', uid: 'man' }), /Drive said no/);
+  fail.upload = null;
+  assert.equal((await usage('driveFolders', 'p1')).usedBytes, size);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: size, fileCount: 0 });
+
+  // So does a failed record write, and the uploaded copy goes to the trash.
+  fail.onUpload = () => { fail.nextBatch = true; };
+  await assert.rejects(pd.runBackup('p1', { kind: 'manual', uid: 'man' }), /write failed/);
+  fail.onUpload = null;
+  assert.equal(stored().filter((m) => m.trashed).length, 1);
+  assert.equal((await db.collection('projects/p1/backups').get()).size, 1);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: size, fileCount: 0 });
+});
+
+test('backups stop at the portal ceiling, and trial accounts stop at 80% of it', { skip }, async () => {
+  const { pd, clock, calls } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await makeProject('p1');
+  await makeProject('p2');
+  await pd.ensureFolders('p1', { name: 'x' });
+  await db.doc('driveFolders/p1').set({ usedBytes: 900000, fileCount: 1 }, { merge: true });
+  // Past 80% of 1 MB: a manager only on the trial cannot back up or restore.
+  await assert.rejects(pd.backupNow(by('man')), (e) => e.code === 'resource-exhausted' && /trial accounts is full/.test(e.message));
+  assert.deepEqual(calls.upload, []);
+  // One that pays can.
+  await paying('own', clock);
+  clock.t += 61000;
+  const b = await pd.backupNow(by('own'));
+  const size = (await db.doc(`projects/p1/backups/${b.id}`).get()).data().size;
+  assert.equal((await usage('driveTotals', 'all')).usedBytes, 900000 + size);
+  // A restore makes a backup first, so it is refused too.
+  await assert.rejects(pd.restoreItems(by('man', { backupId: b.id })), refused(/trial accounts is full/));
+  assert.equal(calls.upload.length, 1);
+
+  // At the ceiling itself nobody can, and the nightly run logs it and goes on.
+  await db.doc('driveTotals/all').set({ usedBytes: 1048576 - 10 }, { merge: true });
+  clock.t += 61000;
+  await assert.rejects(pd.backupNow(by('own')), (e) => e.code === 'resource-exhausted' && /file storage is full, so the project cannot be backed up/.test(e.message));
+  await db.doc('projects/p1/items/i1').set({ type: 'action', title: 'Barrier', status: 'open' });
+  await db.doc('projects/p2/items/i1').set({ type: 'action', title: 'Barrier', status: 'open' });
+  const tally = await pd.dailyBackups();
+  assert.deepEqual({ done: tally.done, failed: tally.failed }, { done: 0, failed: 2 });
+  assert.equal(calls.upload.length, 1);
+  assert.equal((await usage('driveFolders', 'p2')).usedBytes, undefined);
+  assert.equal((await usage('driveTotals', 'all')).usedBytes, 1048576 - 10);
+});
+
+test('the nightly backup of a project owned by an account on the trial stops at 80% of the portal', { skip }, async () => {
+  const { pd, clock, calls } = setup({ DRIVE_TOTAL_QUOTA_MB: '1' });
+  await makeProject('p1', { ownerUid: 'own' });
+  await makeProject('p2', { ownerUid: 'pay', members: { pay: 'owner' }, memberUids: ['pay'] });
+  await paying('pay', clock);
+  // Past 80% of 1 MB (838,861 bytes), well short of the ceiling.
+  await db.doc('driveTotals/all').set({ usedBytes: 900000, fileCount: 1 });
+  const tally = await pd.dailyBackups();
+  assert.deepEqual({ done: tally.done, failed: tally.failed }, { done: 1, failed: 1 });
+  assert.equal(calls.upload.length, 1);
+  assert.equal((await db.collection('projects/p1/backups').get()).size, 0);
+  assert.equal((await db.collection('projects/p2/backups').get()).size, 1);
+  // Once the owner pays, the project is backed up again.
+  await paying('own', clock);
+  assert.equal((await pd.runBackup('p1', { kind: 'auto' })).skipped, false);
+  assert.equal((await db.collection('projects/p1/backups').get()).size, 1);
+});
+
+test('old backups go to the trash and give their space back 30 days later', { skip }, async () => {
+  const { pd, clock, calls, base } = setup();
+  await makeProject('p1');
+  const folders = await pd.ensureFolders('p1', { name: 'x' });
+  // 20 manual backups already kept: the oldest was made before backups were
+  // counted, the rest count 100 bytes each.
+  const ids = [];
+  for (let i = 1; i <= 20; i++) {
+    const f = await base.upload({ name: `b${i}.json`, mimeType: 'application/json', parentId: folders.backupsFolderId, data: Buffer.alloc(100, 32) });
+    ids.push(f.id);
+    await db.doc(`projects/p1/backups/b${i}`).set(Object.assign({ name: `b${i}.json`, kind: 'manual', size: 100, driveFileId: f.id, createdAtMs: i },
+      i === 1 ? {} : { counted: true }));
+  }
+  await db.doc('driveFolders/p1').set({ usedBytes: 1900 }, { merge: true });
+  await db.doc('driveTotals/all').set({ usedBytes: 1900, fileCount: 0 });
+
+  // Two more: each pushes the oldest out.
+  const made = [await pd.backupNow(by('man'))];
+  clock.t += 61000;
+  made.push(await pd.backupNow(by('man')));
+  let added = 0;
+  for (const m of made) added += (await db.doc(`projects/p1/backups/${m.id}`).get()).data().size;
+  assert.deepEqual(calls.trash, [ids[0], ids[1]]);
+  assert.equal((await db.collection('projects/p1/backups').get()).size, 20);
+  const trash = (await db.collection('driveTrash').get()).docs.map((d) => d.data());
+  assert.deepEqual(trash, [{ pid: 'p1', uid: '', size: 100, driveFileId: ids[1], releaseAt: clock.t + F.TRASH_HOLD_MS, backup: true }]);
+  assert.equal((await usage('driveTotals', 'all')).usedBytes, 1900 + added);
+
+  // The space comes back once Drive's trash has emptied; the file counts do not move.
+  clock.t += 31 * DAY;
+  assert.equal(await pd.releaseTrash(), 1);
+  assert.deepEqual(await usage('driveTotals', 'all'), { usedBytes: 1800 + added, fileCount: 0 });
+  const after = await usage('driveFolders', 'p1');
+  assert.equal(after.usedBytes, 1800 + added);
+  assert.equal(after.fileCount, undefined);
 });
 
 test('the nightly backup skips a project that has not changed', { skip }, async () => {

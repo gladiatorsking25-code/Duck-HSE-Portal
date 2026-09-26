@@ -57,11 +57,15 @@ minutes.
    ```
    DRIVE_ROOT_FOLDER_ID=0AB...xyz
    DRIVE_PROJECT_QUOTA_MB=2048
+   DRIVE_TOTAL_QUOTA_MB=102400
    ```
 
    `DRIVE_PROJECT_QUOTA_MB` is the file space each project may use (2 GB unless
-   you change it). These are settings, not secrets; `functions/.env` is not
-   committed to the repository.
+   you change it). `DRIVE_TOTAL_QUOTA_MB` is the space all projects together
+   may use (100 GB unless you change it); set it below the free storage in your
+   Google Workspace. The other limits are under "Limits and housekeeping".
+   These are settings, not secrets; `functions/.env` is not committed to the
+   repository.
 
 6. **Deploy the functions and rules:**
 
@@ -72,9 +76,9 @@ minutes.
    The nightly backup is a scheduled function. The first time, the Firebase CLI
    may ask to turn on Cloud Scheduler; answer yes.
 
-7. **Check it.** Sign in, open a project, click **+ Add files** and add a small
-   PDF. It should appear in the list, and in Drive under
-   `<project name> (<id>)/Files`. As an owner, click **Back up now**; a `.json`
+7. **Check it.** Sign in with an account whose email address is verified, open
+   a project, click **+ Add files** and add a small PDF. It should appear in the
+   list, and in Drive under `<project name> (<id>)/Files`. As an owner, click **Back up now**; a `.json`
    file appears under `Backups`.
 
 ## Limits and housekeeping
@@ -85,10 +89,35 @@ minutes.
   removes the location data inside them. Drawings, certificates and other files
   keep their full detail and are sent as they are. For a bigger document, save a
   compressed PDF.
+- **A verified email address.** Only accounts that have confirmed their email
+  address can add files, click **Back up now** or restore a backup. The
+  Projects page offers to send the link again.
 - **Space per project and per person.** Each project can hold 2 GB
   (`DRIVE_PROJECT_QUOTA_MB`) and at most 5,000 files. Each person can add at most
   10 GB (`DRIVE_USER_QUOTA_MB`) and 20,000 files across all projects, so one
-  account cannot fill the shared drive by making many projects.
+  account cannot fill the shared drive by making many projects. A project's
+  backups use part of its 2 GB (a backup is never refused for it), but not of
+  its 5,000 files, and never any person's space.
+- **Less space during the free trial.** Anyone can sign up for a trial, so an
+  account that is only on the trial can add at most 200 MB of files
+  (`DRIVE_TRIAL_QUOTA_MB`). Once it subscribes, or you grant it access, the full
+  10 GB applies.
+- **Space for the whole portal.** All projects together can hold 100 GB
+  (`DRIVE_TOTAL_QUOTA_MB`), however many accounts there are. When it is reached,
+  nobody can add files or make backups until space is freed or you raise the
+  limit (the nightly log lists each project it could not back up), and the
+  function log says "Portal file space is full". The count is kept in
+  Firestore (`driveTotals/all`, server only) and counts files added through
+  the portal and the projects' backups (deleted files and old backups for 30
+  days, as below). Backups made by earlier versions of the portal are not
+  counted.
+- **The last 20% is kept for paying accounts.** An account that is only on the
+  trial cannot add files, back up or restore once the portal is 80% full
+  (80 GB of the default 100 GB), and the projects it owns are no longer backed
+  up nightly. It is told "File storage for trial accounts is full right now",
+  and the function log says "Trial accounts' share of the portal file space is
+  full". Paying accounts, and accounts you grant access to, can use the whole
+  limit.
 - **Allowed types:** PDF; photos (JPG, PNG, WebP, GIF, HEIC); Word, Excel,
   PowerPoint and OpenDocument files; Outlook `.msg` and `.eml` emails; RTF, CSV
   and text; DWG and DXF drawings. Web pages, scripts, programs and archives are
@@ -106,7 +135,9 @@ minutes.
   `Backups` folder in Drive instead. The nightly job stops starting new projects
   after about 7 minutes and picks up the rest, oldest first, the next night.
 - **Back up now** and **Restore items** can each be used once a minute per
-  project.
+  project, and ten times a day per project between them (the day starts at
+  04:00 UAE time, midnight UTC). Old manual backups and restore points go to the
+  trash and keep counting for 30 days, like deleted files.
 - **Restore items** puts a project's tracked items back as they were in a
   backup. It does not change the team, files or activity log, and it makes a
   backup of the current state first so it can be undone.
@@ -127,4 +158,9 @@ Console → **Functions → Logs**.
 | The same, and the log shows the Drive API "has not been used or is disabled" | Step 1 was skipped. |
 | "This project has used … of its … of file space" | The project reached `DRIVE_PROJECT_QUOTA_MB`. Delete old files or raise the limit. Deleted files count for 30 days. |
 | "You have added … of files across your projects" | The person reached `DRIVE_USER_QUOTA_MB` or 20,000 files. |
+| "During the free trial each person can add up to …" | The account is only on the trial and reached `DRIVE_TRIAL_QUOTA_MB`. It gets the full space once it subscribes or you grant access. |
+| "The portal's file storage is full" | All projects together reached `DRIVE_TOTAL_QUOTA_MB`. Check the shared drive's free space, then raise the limit and redeploy the functions, or ask customers to delete files they no longer need. |
+| "Verify your email address before adding files" (or before backing up or restoring) | The person has not clicked the link in the verification email yet. After clicking it, they open the Projects page again. |
+| "File storage for trial accounts is full right now" | The portal is 80% full (`DRIVE_TOTAL_QUOTA_MB`), so accounts only on the trial cannot add files or back up, and projects they own are not backed up nightly. Paying accounts are not affected. Raise the limit if the shared drive has room. |
+| "This project has been backed up or restored 10 times today" | The daily limit on **Back up now** and **Restore items** for that project. It resets at 04:00 UAE time. Nightly backups still run. |
 | "This project is too large to back up here", or the same in the nightly log | It has more than 3,000 tracked items or 5,000 files. Archive finished work into a new project. |

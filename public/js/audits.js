@@ -206,7 +206,9 @@
       if (exists) { audit.id = 'AUD-' + Date.now().toString(36).toUpperCase(); audit.projectTitle = (audit.projectTitle || '') + ' (imported copy)'; }
       audit.drive = {};
       // File ids are re-issued so an imported copy can never collide with, or
-      // delete, files belonging to the original.
+      // delete, files belonging to the original. The pack comes from someone
+      // else, so each file's type is worked out from its name, not taken from
+      // the pack, and only web (http/https) links are kept.
       for (const sec of audit.sections) {
         for (const it of sec.items) {
           const kept = [];
@@ -215,11 +217,13 @@
             const blob = entry ? openedPack.bytesFor(entry.path) : null;
             if (!blob) continue;
             const id = AuditChecklists.uid('f');
-            await AuditStore.putFile({ id: id, auditId: audit.id, itemId: it.id, name: meta.name, type: meta.type,
-              size: blob.size, blob: new Blob([blob], { type: meta.type || '' }), addedAt: meta.addedAt || Date.now() });
-            kept.push(Object.assign({}, meta, { id: id, size: blob.size }));
+            const type = AuditViewer.safeType(meta.name);
+            await AuditStore.putFile({ id: id, auditId: audit.id, itemId: it.id, name: meta.name, type: type,
+              size: blob.size, blob: new Blob([blob], { type: type }), addedAt: meta.addedAt || Date.now() });
+            kept.push(Object.assign({}, meta, { id: id, type: type, size: blob.size }));
           }
           it.files = kept;
+          it.links = (Array.isArray(it.links) ? it.links : []).filter((l) => l && typeof l.url === 'string' && /^https?:\/\//i.test(l.url));
         }
       }
       audit.createdAt = audit.createdAt || Date.now();

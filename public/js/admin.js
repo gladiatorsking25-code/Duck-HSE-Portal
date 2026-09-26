@@ -10,6 +10,10 @@
   const $ = (id) => document.getElementById(id);
   const DAY = 86400000;
   let allUsers = [];
+  // The list holds the newest 500 accounts. An older one is looked up by its
+  // full address (searchAll), and again whenever the list reloads, until the
+  // search changes.
+  let lookedUp = null;
 
   function esc(v) {
     return String(v == null ? '' : v)
@@ -51,10 +55,31 @@
     try {
       const data = await call('adminListUsers', { limit: 500 });
       allUsers = data.users || [];
+      if (lookedUp) {
+        try { if (!(await addByEmail(lookedUp))) lookedUp = null; } catch (e) { /* message already shown */ }
+      }
       render();
     } catch (e) {
       $('adminTable').innerHTML = '';
     }
+  }
+
+  // Adds (or refreshes) the row of the account that signs in with `email`.
+  // Returns whether there is one.
+  async function addByEmail(email) {
+    const data = await call('adminListUsers', { email });
+    const found = data.users || [];
+    found.forEach((u) => { allUsers = allUsers.filter((x) => x.uid !== u.uid).concat(u); });
+    return found.length > 0;
+  }
+
+  async function searchAll() {
+    const q = ($('adminSearch').value || '').trim();
+    if (!q.includes('@')) { note('warn', 'Type the account\'s full email address to search all accounts.'); return; }
+    try {
+      if (await addByEmail(q)) { lookedUp = q; render(); }
+      else note('warn', `No account signs in with ${q}.`);
+    } catch (e) { /* message already shown */ }
   }
 
   async function act(uid, action, untilMillis) {
@@ -68,13 +93,66 @@
     try { await call('adminSetRole', { targetUid: uid, role }); await load(); } catch (e) {}
   }
 
+  function note(kind, text) {
+    $('adminResult').innerHTML = `<div class="banner banner-${kind}"><div>${esc(text)}</div></div>`;
+  }
+
+  // Deleting an account (when its owner asks, see docs/DEPLOY.md): the server
+  // first says what would happen, then the admin types the address to confirm.
+  // Their own projects (nobody else belongs to them) are deleted, unless
+  // "Keep their own projects archived" is ticked.
+  async function deleteAccount(uid) {
+    const keepSoloProjects = $('adminKeepSolo').checked;
+    let plan;
+    try { plan = await call('adminDeleteAccount', { targetUid: uid, dryRun: true, keepSoloProjects }); } catch (e) { return; }
+    const byId = plan.email === plan.uid;
+    const lines = [
+      `Delete the account ${plan.email}? This cannot be undone.`,
+      '',
+      'Their sign-in, profile and saved records are deleted and they leave every project. Project history keeps what they did, shown as "deleted user".'
+    ];
+    if (plan.leave.length) lines.push('', `They leave: ${plan.leave.join(', ')}.`);
+    if (plan.solo.length) {
+      lines.push('', plan.keepSoloProjects
+        ? `Archived and kept, because nobody else belongs to them: ${plan.solo.join(', ')}.`
+        : `DELETED with their items, files and backups, because nobody else belongs to them: ${plan.solo.join(', ')}. To keep them archived instead, cancel and tick "Keep their own projects archived".`);
+    }
+    const sub = plan.subscription;
+    if (sub && sub.provider === 'stripe') {
+      lines.push('', sub.renews
+        ? `WARNING: their card subscription still renews. Cancel it in Stripe first (customer ${sub.stripeCustomerId || 'unknown'}), or they will keep being charged.`
+        : 'Their card subscription is already cancelled and will not renew.');
+    } else if (sub) {
+      lines.push('', 'WARNING: their Google Play subscription is still running. Ask them to cancel it in Google Play, or cancel it in Play Console (Order management), or they will keep being charged.');
+    }
+    lines.push('', byId ? 'To confirm, type the account id:' : 'To confirm, type their email address:');
+    const typed = prompt(lines.join('\n'));
+    if (typed == null) return;
+    if (typed.trim().toLowerCase() !== plan.email.toLowerCase()) {
+      note('warn', 'Nothing was deleted: what you typed did not match.');
+      return;
+    }
+    try {
+      const res = await call('adminDeleteAccount', { targetUid: uid, confirm: typed.trim(), keepSoloProjects });
+      await load();
+      const parts = [`The account ${res.email} was deleted.`];
+      if (res.projectsDeleted) parts.push(`${res.projectsDeleted} project${res.projectsDeleted === 1 ? ' was' : 's were'} deleted.`);
+      if (res.archived) parts.push(`${res.archived} project${res.archived === 1 ? ' was' : 's were'} archived.`);
+      if (res.subscription && res.subscription.renews) parts.push('Remember to cancel their subscription.');
+      note('ok', parts.join(' '));
+    } catch (e) { /* message already shown */ }
+  }
+
   function render() {
-    const q = ($('adminSearch').value || '').toLowerCase();
+    const q = ($('adminSearch').value || '').trim().toLowerCase();
     const list = allUsers.filter(u => {
       if (!q) return true;
       return `${u.email || ''} ${u.uid} ${u.subscriptionStatus || ''} ${u.role || ''}`.toLowerCase().includes(q);
     });
-    if (!list.length) { $('adminTable').innerHTML = '<div class="card empty-state">No users match.</div>'; return; }
+    if (!list.length) {
+      $('adminTable').innerHTML = `<div class="card empty-state">No users match.${q ? ' The list shows the newest 500 accounts: for an older one, type its full email address and press Enter or <strong>Search all accounts</strong>.' : ''}</div>`;
+      return;
+    }
 
     $('adminTable').innerHTML = `
       <table class="data-table">
@@ -86,7 +164,8 @@
             const a = stateOf(u);
             const grant = u.compForever ? 'forever' : fmt(u.adminGrantUntil);
             return `<tr>
-              <td>${esc(u.email || '—')}<div class="hint num">${esc(u.uid.slice(0, 10))}…</div></td>
+              <td>${esc(u.email || '—')}${u.email && !u.emailVerified ? ' <span class="hint">(not verified)</span>' : ''}
+                ${u.signInDeleted ? '<div class="hint">Sign-in deleted</div>' : ''}<div class="hint num">${esc(u.uid.slice(0, 10))}…</div></td>
               <td>${badge(a)}</td>
               <td>${esc(u.subscriptionStatus || '—')}${u.subscriptionProvider ? `<div class="hint">${esc(u.subscriptionProvider)}${u.cancelAtPeriodEnd ? ' · cancelling' : ''}</div>` : ''}</td>
               <td class="num">${fmt(u.trialEndsAt)}</td>
@@ -101,6 +180,7 @@
                   <button class="btn btn-sm" data-a="extendTrial" data-d="14" data-u="${esc(u.uid)}">+14d trial</button>
                   <button class="btn btn-sm btn-danger" data-a="revoke" data-u="${esc(u.uid)}">Revoke</button>
                   <button class="btn btn-sm" data-a="role" data-r="${u.role === 'admin' ? 'user' : 'admin'}" data-u="${esc(u.uid)}">${u.role === 'admin' ? 'Remove admin' : 'Make admin'}</button>
+                  ${u.role === 'admin' ? '' : `<button class="btn btn-sm btn-danger" data-a="delete" data-u="${esc(u.uid)}">Delete account</button>`}
                 </div>
               </td>
             </tr>`;
@@ -117,6 +197,7 @@
         else if (a === 'extendTrial') act(uid, 'extendTrial', Date.now() + Number(b.getAttribute('data-d')) * DAY);
         else if (a === 'revoke') { if (confirm('Revoke access for this account?')) act(uid, 'revoke'); }
         else if (a === 'role') setRole(uid, b.getAttribute('data-r'));
+        else if (a === 'delete') deleteAccount(uid);
       });
     });
   }
@@ -149,7 +230,9 @@
     $('adminGate').innerHTML = '';
     $('adminBody').hidden = false;
     $('adminRefresh').addEventListener('click', load);
-    $('adminSearch').addEventListener('input', render);
+    $('adminSearch').addEventListener('input', () => { lookedUp = null; render(); });
+    $('adminSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter' && $('adminSearch').value.includes('@')) searchAll(); });
+    $('adminSearchAll').addEventListener('click', searchAll);
     load();
   });
 })();

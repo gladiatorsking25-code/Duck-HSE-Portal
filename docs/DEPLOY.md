@@ -28,8 +28,9 @@ Follow the steps in order the first time. After that, see
 - **Google Workspace** with a shared drive, for project files and backups
   ([DRIVE_FILES.md](DRIVE_FILES.md)). Optional: without it, everything else
   works and the Files panel says storage is not set up.
-- A computer with **Node.js 20 or newer** (<https://nodejs.org>, the LTS
-  version). Windows, macOS and Linux all work.
+- A computer with **Node.js 22 or newer** (<https://nodejs.org>, the LTS
+  version). Windows, macOS and Linux all work. The Cloud Functions run on
+  Node.js 22 too (`firebase.json`).
 
 **Never paste a secret key into a chat, an email, or any file in the
 repository.** Secrets go only into Firebase's secret storage, with the commands
@@ -62,9 +63,10 @@ In <https://console.firebase.google.com>, open the project:
    alert: Google Cloud Console → **Billing → Budgets & alerts → Create budget**,
    for example 10 USD a month, with email alerts.
 2. **Authentication → Sign-in method:** turn on **Email/Password**.
-3. **Authentication → Settings → Authorized domains:** add your domain, for
-   example `hse.example.com`. If people may open it both with and without
-   `www.`, add both.
+3. **Authentication → Settings → Authorized domains:** add your site's
+   domain without `www.`, for example `hse.example.com`. The website sends
+   anyone who opens the `www.` address to this one (`public/.htaccess`), so
+   everyone signs in on the same address.
 4. **Firestore Database:** it must exist (production mode). Its location cannot
    be changed later; see the note on data location in `public/privacy.html`,
    section 3a.
@@ -91,15 +93,22 @@ cp functions/.env.example functions/.env
 
 | Setting | Value |
 |---|---|
-| `APP_ORIGIN` | Your site address exactly as customers open it, e.g. `https://hse.example.com` (https, no trailing slash). Stripe sends customers back here. |
+| `APP_ORIGIN` | Your site address without `www.`, e.g. `https://hse.example.com` (https, no trailing slash). It must be exactly the address the website sends everyone to (`public/.htaccess` sends `www.` visitors to the address without it). Stripe sends customers back here. |
 | `STRIPE_PRICE_MONTHLY` | The Stripe price ID (`price_…`). |
 | `STRIPE_PRICE_YEARLY` | Optional second price. |
 | `STRIPE_AUTOMATIC_TAX` | `false` unless Stripe Tax is set up. |
 | `DRIVE_ROOT_FOLDER_ID` | The shared drive for project files (step 5). Empty switches files off. |
 | `DRIVE_PROJECT_QUOTA_MB` | File space per project, default `2048`. |
 | `DRIVE_USER_QUOTA_MB` | File space one person can add across all projects, default `10240`. |
+| `DRIVE_TRIAL_QUOTA_MB` | The same while a person is only on the free trial, default `200`. |
+| `DRIVE_TOTAL_QUOTA_MB` | File space all projects together may use, default `102400` (100 GB). Keep it below the free storage in your Google Workspace. |
+| `PLAY_PACKAGE_NAME`, `PLAY_PRODUCT_IDS` | Only for the Android app. The defaults (`Duck.HSE.Portal`, `pro_monthly`) match the app as shipped. |
 
 `functions/.env` holds settings, not secrets, and git ignores it.
+
+The website sells by card through Stripe. The Android app (optional, later)
+sells through Google Play and has its own steps: `PLAY_STORE_LAUNCH.md` §2 to
+§3a, and `SECURITY.md` §6 step 10, which Play renewals need.
 
 ## 5. Google Drive for project files (once, optional)
 
@@ -154,8 +163,9 @@ firebase deploy --only functions
    - Delete the zip afterwards.
 4. Check that `public_html` now contains `index.html`, the `js` and `css`
    folders, and **`.htaccess`**. If you cannot see `.htaccess`, turn on "Show
-   hidden files" in File Manager's settings. It forces HTTPS and sets the
-   security headers, so it must be there.
+   hidden files" in File Manager's settings. It forces HTTPS, sends the
+   `www.` address to the address without it, and sets the security headers,
+   so it must be there.
 
 FTP works too (hPanel → **Files → FTP Accounts**, then FileZilla): upload the
 *contents* of `public/`, including `.htaccess`, into `public_html`.
@@ -232,12 +242,65 @@ Then switch Stripe to live payments: [PAYMENTS.md](PAYMENTS.md), step 8.
 5. Open the site. Installed copies pick up the new version the next time they
    are opened and show an update notice.
 
+## Account deletion requests
+
+People ask by email (the app's **Account deletion** page tells them how). The
+page promises it is done within 30 days.
+
+1. Check the email comes from the address the account uses.
+2. If they pay, cancel the subscription first, or they keep being charged: by
+   card in the Stripe Dashboard (**Customers** → their address → cancel the
+   subscription), through Google Play in Play Console (**Order management** →
+   their order → cancel). Keep the invoices the law requires you to keep.
+3. Open the site's **Admin** page → **Users & access** and search for the
+   address. The list holds the newest 500 accounts: for an older one, type the
+   full address and press Enter (or click **Search all accounts**). Projects
+   only they belong to are deleted; if they asked to keep them, tick **Keep
+   their own projects archived**. Click **Delete account**. It lists what will
+   happen first: the projects they leave, the projects deleted (or, with the
+   box ticked, archived) because nobody else belongs to them, and a warning if
+   a subscription still renews.
+4. If it says they own a project other people still use, it stops and names the
+   project. Ask them who should take it over, and either let them hand it over
+   (project page → **Team** → **Make owner**) or do it in Firebase Console →
+   **Firestore** → `projects` → that project: set `ownerUid` to the new owner's
+   uid, the new owner's entry in `members` to `owner`, and the leaving person's
+   entry to `manager`. Then click **Delete account** again.
+5. Type their email address to confirm. The portal deletes their sign-in, their
+   `users` record with the assessments, permits and checklists saved to it,
+   their file-space count and any Google Play purchase links; deletes each
+   project only they belonged to, with its items, files, backups and Drive
+   folder (moved to the shared drive's trash, emptied after 30 days), and gives
+   its file space back (unless you ticked the box: then it is archived and
+   kept); takes them out of every other project and cancels invites to their
+   address; replaces their address with "deleted user" in every project's
+   activity log, file list and backup list; and notes in `adminLog` that you
+   did it, without the address. `deletedAccounts/<uid>` keeps only the date,
+   so an app still open on their device cannot write their records back.
+6. Files they added to other people's projects stay with those projects for
+   their teams. If they ask for those to go too, ask the project's owner or a
+   manager to delete them on the project page.
+7. Project **backups** already in Google Drive still hold their address. Each
+   project keeps its last 30 nightly backups (made only on nights the project
+   changed), 20 manual ones and 10 restore points, so in a quiet project they
+   can last many months. If they ask, delete the backups of the other projects
+   they belonged to: the `.json` files in each project's `Backups` folder, and
+   the matching documents under `projects` → the project → `backups` in
+   Firestore.
+8. Reply to confirm it is done. Data kept only on their own devices is theirs
+   to clear; the Account deletion page has a button for it.
+
+If **Delete account** stops with an error, fix what it says and click it
+again: it carries on where it stopped. If it keeps saying the sign-in could not
+be deleted, delete it in Firebase Console → **Authentication** (find the
+address → **Delete account**), then click **Delete account** once more.
+
 ## If something goes wrong
 
 | What you see | What to check |
 |---|---|
 | The site does not open, or shows Hostinger's default page | SSL is active (step 7.1); the files are in `public_html` itself, not in a subfolder; the default placeholder file is deleted. |
-| "This domain is not authorized" or sign-in fails at once | Step 2.3: add the exact domain (with and without `www.`) to Authorized domains. |
+| "This domain is not authorized" or sign-in fails at once | Step 2.3: add the exact domain, without `www.`, to Authorized domains. |
 | Pages look unstyled, or the browser console mentions a Content Security Policy | `.htaccess` was changed or a new outside service is being called; compare with the one in `public/`. |
 | "Card payments are not set up yet" | The Stripe secret key is not stored, or the functions were not redeployed after storing it. |
 | Paid on Stripe, but the account still shows the paywall | The webhook: address, events and signing secret ([PAYMENTS.md](PAYMENTS.md), troubleshooting). |

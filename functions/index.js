@@ -16,12 +16,17 @@
 //    "Google Play Android Developer API".
 // 3. Play Console → Setup → API access → link this Cloud project, then give the
 //    Functions runtime service account (PROJECT_ID@appspot.gserviceaccount.com)
-//    the "View financial data" permission.
+//    the "View financial data" and "Manage orders and subscriptions" permissions
+//    (the second lets the server acknowledge purchases).
 // 4. Make yourself the first admin: Firebase Console → Firestore → users/<your uid>
 //    → set field  role: "admin"  (String). Only an admin can use the admin
 //    functions below; this bootstrap is done once, by hand, with console rights.
-// 5. For Real-time Developer Notifications: Play Console → Monetization setup →
-//    create a Pub/Sub topic named to match RTDN_TOPIC below.
+// 5. Real-time Developer Notifications (required: this is how renewals,
+//    cancellations and refunds reach the account): deploying creates the
+//    Pub/Sub topic RTDN_TOPIC. Grant
+//    google-play-developer-notifications@system.gserviceaccount.com the
+//    "Pub/Sub Publisher" role on it, then enter the full topic name in Play
+//    Console → Monetization setup. Steps: docs/SECURITY.md §6.
 // 6. `firebase deploy --only functions,firestore:rules`
 
 const functions = require('firebase-functions/v1');
@@ -53,62 +58,47 @@ exports.onUserCreate = functions.auth.user().onCreate(async (user) => {
 });
 
 // -------------------------------------------------------------------------
-// Play Billing purchase verification (called by the app after a purchase).
+// Play Billing purchase verification (called by the app after a purchase, and
+// by "Restore purchases"). The checks and the one-account rule are in play.js.
 // -------------------------------------------------------------------------
-async function getAndroidPublisher() {
-  const auth = new google.auth.GoogleAuth({
-    scopes: ['https://www.googleapis.com/auth/androidpublisher']
-  });
-  const authClient = await auth.getClient();
-  return google.androidpublisher({ version: 'v3', auth: authClient });
-}
-
-async function applyPurchaseToUser(uid, packageName, subscriptionId, purchaseToken) {
-  const androidpublisher = await getAndroidPublisher();
-  const res = await androidpublisher.purchases.subscriptions.get({
-    packageName, subscriptionId, token: purchaseToken
-  });
-  const sub = res.data;
-  const expiry = sub.expiryTimeMillis ? Number(sub.expiryTimeMillis) : null;
-  // paymentState: 0 pending, 1 received, 2 free trial, 3 deferred.
-  const active = expiry && expiry > Date.now();
-  const status = active ? (sub.paymentState === 0 ? 'in_grace' : 'active') : 'expired';
-
-  // A lapsed Play purchase must not end a card subscription that is still live.
-  const userRef = db.collection('users').doc(uid);
-  const current = (await userRef.get()).data() || {};
-  const stripeLive = current.subscriptionProvider === 'stripe'
-    && ['active', 'in_grace'].includes(current.subscriptionStatus)
-    && Number(current.subscriptionExpiryMillis || 0) > Date.now();
-  if (active || !stripeLive) {
-    await userRef.set({
-      subscriptionProvider: 'play',
-      subscriptionStatus: status,
-      subscriptionId,
-      subscriptionExpiryMillis: expiry,
-      subscriptionUpdatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
+const play = require('./play');
+let publisherClient = null;
+function androidPublisher() {
+  if (!publisherClient) {
+    const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/androidpublisher'] });
+    publisherClient = auth.getClient().then((authClient) => google.androidpublisher({ version: 'v3', auth: authClient }));
+    publisherClient.catch(() => { publisherClient = null; });
   }
-
-  // Remember which user owns this token so RTDN events can find them later.
-  await db.collection('purchaseTokens').doc(purchaseToken).set({
-    uid, packageName, subscriptionId, updatedAt: Date.now()
-  }, { merge: true });
-
-  return { status, expiryTimeMillis: expiry };
+  return publisherClient;
 }
+async function playVerify(packageName, subscriptionId, token) {
+  const res = await (await androidPublisher()).purchases.subscriptions.get({ packageName, subscriptionId, token });
+  return res.data;
+}
+async function playAcknowledge(packageName, subscriptionId, token) {
+  await (await androidPublisher()).purchases.subscriptions.acknowledge({ packageName, subscriptionId, token, requestBody: {} });
+}
+const playDeps = () => ({
+  db, verify: playVerify, acknowledge: playAcknowledge, env: process.env,
+  serverTimestamp: () => FieldValue.serverTimestamp()
+});
 
 exports.verifyPlayPurchase = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before verifying a purchase.');
   }
-  const { packageName, subscriptionId, purchaseToken } = data || {};
-  if (!packageName || !subscriptionId || !purchaseToken) {
-    throw new functions.https.HttpsError('invalid-argument', 'packageName, subscriptionId, and purchaseToken are all required.');
+  // data.packageName is ignored: the server checks its own app (play.js).
+  const { subscriptionId, purchaseToken } = data || {};
+  if (!subscriptionId || !purchaseToken) {
+    throw new functions.https.HttpsError('invalid-argument', 'subscriptionId and purchaseToken are both required.');
   }
   try {
-    return await applyPurchaseToUser(context.auth.uid, packageName, subscriptionId, purchaseToken);
+    return await play.applyPurchase(Object.assign(playDeps(), {
+      uid: context.auth.uid, subscriptionId, purchaseToken, source: 'client'
+    }));
   } catch (err) {
+    if (err instanceof functions.https.HttpsError) throw err;
+    if (err instanceof play.PlayError) throw new functions.https.HttpsError(err.code, err.message);
     console.error('Play purchase verification failed', err);
     throw new functions.https.HttpsError('internal', 'Could not verify this purchase with Google Play.');
   }
@@ -116,8 +106,9 @@ exports.verifyPlayPurchase = functions.https.onCall(async (data, context) => {
 
 // -------------------------------------------------------------------------
 // Real-time Developer Notifications: Play pushes renew/cancel/expire/grace
-// events here the moment they happen, so a cancelled subscription is reflected
-// immediately instead of only when the user reopens the app.
+// events here the moment they happen. A renewal keeps the same token, so
+// without these the account only hears of it when the Android app next checks
+// Google Play. Required: docs/SECURITY.md §6.
 // -------------------------------------------------------------------------
 exports.playRTDN = functions.pubsub.topic(RTDN_TOPIC).onPublish(async (message) => {
   let payload;
@@ -127,14 +118,10 @@ exports.playRTDN = functions.pubsub.topic(RTDN_TOPIC).onPublish(async (message) 
     console.error('Bad RTDN payload', e);
     return;
   }
-  const note = payload.subscriptionNotification;
-  if (!note || !note.purchaseToken) return; // ignore test/other notifications
-
-  const map = await db.collection('purchaseTokens').doc(note.purchaseToken).get();
-  if (!map.exists) { console.warn('RTDN for unknown token', note.purchaseToken); return; }
-  const { uid, packageName, subscriptionId } = map.data();
   try {
-    await applyPurchaseToUser(uid, packageName, subscriptionId || note.subscriptionId, note.purchaseToken);
+    const outcome = await play.handleNotification(Object.assign(playDeps(), { payload }));
+    if (outcome === 'unknown-token') console.warn('RTDN for unknown token', payload.subscriptionNotification.purchaseToken);
+    else console.log('Play notification', outcome);
   } catch (err) {
     console.error('RTDN re-verification failed', err);
   }
@@ -216,32 +203,83 @@ exports.adminSetRole = functions.https.onCall(async (data, context) => {
   return { uid: targetUid, role };
 });
 
-// List accounts for the admin dashboard (paged).
+// The sign-in records (Firebase Auth) for a list of uids, 100 at a time.
+async function signInsFor(uids) {
+  const out = new Map();
+  for (let i = 0; i < uids.length; i += 100) {
+    const res = await admin.auth().getUsers(uids.slice(i, i + 100).map((uid) => ({ uid })));
+    res.users.forEach((r) => out.set(r.uid, r));
+  }
+  return out;
+}
+
+// One row of the admin list: `u` is the users doc ({} when there is none),
+// `signIn` the Firebase Auth record (none when it was deleted).
+function userRow(uid, u, signIn) {
+  return {
+    uid,
+    email: (signIn && signIn.email) || null,
+    emailVerified: !!(signIn && signIn.emailVerified),
+    signInDeleted: !signIn,
+    role: u.role || 'user',
+    subscriptionStatus: u.subscriptionStatus || null,
+    trialEndsAt: u.trialEndsAt || null,
+    subscriptionExpiryMillis: u.subscriptionExpiryMillis || null,
+    adminGrantUntil: u.adminGrantUntil || null,
+    compForever: !!u.compForever,
+    subscriptionProvider: u.subscriptionProvider || null,
+    cancelAtPeriodEnd: !!u.cancelAtPeriodEnd,
+    createdAt: u.createdAt && u.createdAt.toMillis ? u.createdAt.toMillis() : null
+  };
+}
+
+// List accounts for the admin dashboard (paged), or with data.email the one
+// account that signs in with that address, however old. The email shown is
+// the one the person signs in with, from Firebase Auth, never the copy in
+// their users doc. createdAt is set by onUserCreate and the rules keep
+// clients off it.
 exports.adminListUsers = functions.https.onCall(async (data, context) => {
   await assertAdmin(context);
+  if (data && data.email != null) {
+    const email = normEmail(data.email);
+    if (!email || email.length > 320) return { users: [], count: 0 };
+    let signIn;
+    try { signIn = await admin.auth().getUserByEmail(email); }
+    catch (e) {
+      if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-email') return { users: [], count: 0 };
+      throw e;
+    }
+    const u = (await db.collection('users').doc(signIn.uid).get()).data() || {};
+    return { users: [userRow(signIn.uid, u, signIn)], count: 1 };
+  }
   const limit = Math.min(Number((data && data.limit) || 100), 500);
   let q = db.collection('users').orderBy('createdAt', 'desc').limit(limit);
   if (data && data.startAfterCreatedAt) {
     q = db.collection('users').orderBy('createdAt', 'desc').startAfter(new Date(data.startAfterCreatedAt)).limit(limit);
   }
   const snap = await q.get();
-  const users = snap.docs.map(d => {
-    const u = d.data();
-    return {
-      uid: d.id,
-      email: u.email || null,
-      role: u.role || 'user',
-      subscriptionStatus: u.subscriptionStatus || null,
-      trialEndsAt: u.trialEndsAt || null,
-      subscriptionExpiryMillis: u.subscriptionExpiryMillis || null,
-      adminGrantUntil: u.adminGrantUntil || null,
-      compForever: !!u.compForever,
-      subscriptionProvider: u.subscriptionProvider || null,
-      cancelAtPeriodEnd: !!u.cancelAtPeriodEnd,
-      createdAt: u.createdAt && u.createdAt.toMillis ? u.createdAt.toMillis() : null
-    };
-  });
+  const signIns = await signInsFor(snap.docs.map((d) => d.id));
+  const users = snap.docs.map((d) => userRow(d.id, d.data(), signIns.get(d.id)));
   return { users, count: users.length };
+});
+
+// Delete an account when its owner asks: sign-in, profile, saved records,
+// project memberships and invites, and the projects only they belong to;
+// their address is replaced by "deleted user" in project history (see
+// account-delete.js, docs/DEPLOY.md).
+// data: { targetUid, dryRun } to see what would happen, then
+//       { targetUid, confirm: <the account's email address> } to do it.
+//       keepSoloProjects: true archives their own projects instead.
+const { makeAccountDelete } = require('./account-delete');
+exports.adminDeleteAccount = functions.runWith({ timeoutSeconds: 540, memory: '512MB' }).https.onCall(async (data, context) => {
+  try {
+    const adminUid = await assertAdmin(context);
+    const d = data || {};
+    return await makeAccountDelete({ db, FieldValue, auth: admin.auth(), drive: drive() }).deleteAccount({
+      adminUid, targetUid: d.targetUid, confirm: d.confirm, dryRun: d.dryRun === true,
+      keepSoloProjects: d.keepSoloProjects === true
+    });
+  } catch (err) { throw asHttpsError(err); }
 });
 
 // -------------------------------------------------------------------------
@@ -322,11 +360,13 @@ exports.projectSetMember = functions.https.onCall(async (data, context) => {
 });
 
 // Remove a member (data.uid) or cancel a pending invite (data.email).
+// Leaving a project yourself needs no subscription; the rest does.
 exports.projectRemoveMember = functions.https.onCall(async (data, context) => {
   try {
     if (!context.auth) throw new PlanError('unauthenticated', 'Sign in.');
     const callerUid = context.auth.uid;
     const { projectId, uid, email } = data || {};
+    if (uid !== callerUid) await assertSubscribed(context, 'manage a team');
     if (!projectId || typeof projectId !== 'string') throw new PlanError('invalid-argument', 'projectId is required.');
     const ref = db.collection('projects').doc(projectId);
     return await db.runTransaction(async (tx) => {
@@ -361,16 +401,20 @@ exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
     const inviteSnap = await inviteRef.get();
     const invites = (inviteSnap.exists && inviteSnap.data().invites) || {};
     const joined = [];
+    // Index entries that are done with: joined, cancelled, or the project is
+    // gone. An invite to an archived project stays, for when it reopens.
+    const settled = [];
     for (const projectId of Object.keys(invites)) {
       const ref = db.collection('projects').doc(projectId);
-      await db.runTransaction(async (tx) => {
+      const outcome = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
-        if (!snap.exists) return;
+        if (!snap.exists) return 'gone';
         const p = snap.data();
         // The project's own pending list is the source of truth: an invite
         // that was cancelled there is ignored.
         const invite = (p.pendingInvites || []).find((i) => i.email === email);
-        if (!invite || p.status === 'archived') return;
+        if (!invite) return 'cancelled';
+        if (p.status === 'archived') return 'waiting';
         const members = Object.assign({}, p.members);
         const memberEmails = Object.assign({}, p.memberEmails);
         if (!members[uid]) members[uid] = invite.role;
@@ -381,10 +425,22 @@ exports.projectAcceptInvites = functions.https.onCall(async (data, context) => {
           updatedAt: FieldValue.serverTimestamp(), updatedBy: uid
         });
         logActivity(tx, ref, uid, email, 'project.update', `${email} joined as ${invite.role}`);
-        joined.push(projectId);
+        return 'joined';
+      });
+      if (outcome === 'joined') joined.push(projectId);
+      if (outcome !== 'waiting') settled.push(projectId);
+    }
+    if (inviteSnap.exists) {
+      await db.runTransaction(async (tx) => {
+        const cur = await tx.get(inviteRef);
+        if (!cur.exists) return;
+        const left = Object.keys(cur.data().invites || {}).filter((pid) => !settled.includes(pid));
+        if (!left.length) tx.delete(inviteRef);
+        else if (settled.length) {
+          tx.set(inviteRef, { invites: Object.fromEntries(settled.map((pid) => [pid, FieldValue.delete()])) }, { merge: true });
+        }
       });
     }
-    if (inviteSnap.exists) await inviteRef.delete();
     return { joined, needsVerification: false };
   } catch (err) { throw asHttpsError(err); }
 });
@@ -500,7 +556,8 @@ exports.projectFileUpload = functions.runWith(FILE_RUN).https.onCall(async (data
     const uid = await assertSubscribed(context, 'add files');
     const d = data || {};
     return await projectDrive().uploadFile({
-      uid, email: context.auth.token.email, projectId: d.projectId, data: d.data,
+      uid, email: context.auth.token.email, emailVerified: context.auth.token.email_verified === true,
+      projectId: d.projectId, data: d.data,
       input: { name: d.name, size: d.size, category: d.category, note: d.note, itemId: d.itemId }
     });
   } catch (err) { throw fileError(err); }
@@ -524,7 +581,9 @@ exports.projectFileDelete = functions.https.onCall(async (data, context) => {
 exports.projectBackupNow = functions.runWith(FILE_RUN).https.onCall(async (data, context) => {
   try {
     const uid = await assertSubscribed(context, 'back up a project');
-    return await projectDrive().backupNow({ uid, email: context.auth.token.email, projectId: (data || {}).projectId });
+    return await projectDrive().backupNow({
+      uid, email: context.auth.token.email, emailVerified: context.auth.token.email_verified === true, projectId: (data || {}).projectId
+    });
   } catch (err) { throw fileError(err); }
 });
 
@@ -538,7 +597,10 @@ exports.projectBackupDownload = functions.runWith(FILE_RUN).https.onCall(async (
 exports.projectRestoreItems = functions.runWith({ timeoutSeconds: 300, memory: '512MB' }).https.onCall(async (data, context) => {
   try {
     const uid = await assertSubscribed(context, 'restore a backup');
-    return await projectDrive().restoreItems({ uid, email: context.auth.token.email, projectId: (data || {}).projectId, backupId: (data || {}).backupId });
+    return await projectDrive().restoreItems({
+      uid, email: context.auth.token.email, emailVerified: context.auth.token.email_verified === true,
+      projectId: (data || {}).projectId, backupId: (data || {}).backupId
+    });
   } catch (err) { throw fileError(err); }
 });
 

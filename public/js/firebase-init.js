@@ -15,7 +15,7 @@ let firebaseReadyPromise = null;
 
 if (FIREBASE_READY) {
   firebaseReadyPromise = new Promise((resolve, reject) => {
-    const SDK_VERSION = '10.13.0';
+    const SDK_VERSION = '10.13.0';   // keep in step with FIREBASE_SDK_VERSION in sw.js
     const scripts = [
       `https://www.gstatic.com/firebasejs/${SDK_VERSION}/firebase-app-compat.js`,
       `https://www.gstatic.com/firebasejs/${SDK_VERSION}/firebase-auth-compat.js`,
@@ -28,6 +28,14 @@ if (FIREBASE_READY) {
       if (i >= scripts.length) {
         try {
           firebase.initializeApp(FIREBASE_CONFIG);
+          // Keep the account's records and any unsent writes in IndexedDB, so
+          // a save made offline survives leaving the page and is sent when the
+          // device is back online. Best effort: some browsers (private
+          // windows) refuse it, and Firestore then keeps them in memory only.
+          try {
+            firebase.firestore().enablePersistence({ synchronizeTabs: true })
+              .catch((err) => console.warn('Offline copy of the account is not available here', err && err.code));
+          } catch (e) { /* not available */ }
           resolve(firebase);
         } catch (e) { reject(e); }
         return;

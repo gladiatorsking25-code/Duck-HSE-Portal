@@ -1,7 +1,11 @@
 // storage.js — localStorage-backed data layer.
-// Everything lives in the browser's localStorage under one namespace, so the
-// app works offline on GitHub Pages with no server. Use Backup/Restore
-// (see settings.html) regularly since clearing browser data will erase records.
+// Permits, assessments and checklists live in the browser's localStorage, so
+// every page can read them synchronously and the app works offline. While
+// signed in they are also copied to the account (js/cloud-sync.js). The lists
+// hold one account's records at a time; js/firebase-auth.js (DeviceData) puts
+// them aside when someone else signs in on the same device. Use Backup/Restore
+// (see settings.html) regularly since clearing browser data will erase records
+// that have not reached the account.
 
 const DB = {
   KEYS: {
@@ -10,18 +14,38 @@ const DB = {
     counter: 'cla_permit_counter',
     checklists: 'cla_checklists'
   },
+  // Which account's records are the ones above, and the marker set while
+  // another account's records are being put aside. Kept in step with
+  // DeviceData in js/firebase-auth.js.
+  DEVICE_KEYS: { owner: 'cla_data_uid', swap: 'cla_data_swap' },
+
+  // True for the few milliseconds after a sign-in while the previous
+  // account's records are moved out: they must not be shown or written over.
+  _swapping() {
+    try { return !!localStorage.getItem(this.DEVICE_KEYS.swap); } catch (e) { return false; }
+  },
 
   _get(key) {
+    if (this._swapping()) return [];
     try {
       const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : [];
+      const v = raw ? JSON.parse(raw) : [];
+      return Array.isArray(v) ? v : [];
     } catch (e) {
       console.error('Storage read failed for', key, e);
       return [];
     }
   },
 
+  // Tells the user (and returns true) when a save has to wait for that.
+  _blockedBySwap() {
+    if (!this._swapping()) return false;
+    alert('Your records are still being set up on this device. Wait a moment, then save again.');
+    return true;
+  },
+
   _set(key, value) {
+    if (this._blockedBySwap()) return false;
     try {
       localStorage.setItem(key, JSON.stringify(value));
       return true;
@@ -32,69 +56,112 @@ const DB = {
     }
   },
 
-  // Fire-and-forget hooks into js/cloud-sync.js. Both are no-ops unless
-  // Firebase has been configured (see js/firebase-config.js) and the user is
-  // signed in with a real (Firebase) account — the app behaves exactly as it
-  // did before cloud sync existed until then. Wrapped defensively so a
-  // missing/unloaded CloudSync never breaks a plain local save.
+  // Records in the list, without tombstones of deleted ones.
+  _list(key) {
+    return this._get(key).filter(r => r && typeof r === 'object' && r.deleted !== true);
+  },
+
+  // Every save carries the time it was made (newer wins when devices sync)
+  // and stays pending until the account has it (js/cloud-sync.js). The time
+  // never goes backwards for a record, even if this device's clock is behind.
+  // A record kept from before the device had an owner (`_legacy`, see
+  // DeviceData in js/firebase-auth.js) goes to the account once edited.
+  _stamp(record, previous) {
+    const prev = Math.max(Number(record.updatedAt) || 0, Number(previous && previous.updatedAt) || 0);
+    record.updatedAt = Math.max(Date.now(), prev + 1);
+    record._pending = true;
+    delete record._legacy;
+    return record;
+  },
+
+  // Hooks into js/cloud-sync.js. No-ops unless Firebase has been configured
+  // (see js/firebase-config.js) and the user is signed in. Wrapped defensively
+  // so a missing/unloaded CloudSync never breaks a plain local save; a record
+  // that could not be sent stays pending and is sent later.
   _cloudPush(collectionName, record) {
     try {
       if (typeof CloudSync !== 'undefined') CloudSync.push(collectionName, record);
     } catch (e) { console.error('Cloud sync push skipped', e); }
   },
-  _cloudRemove(collectionName, id) {
+  _cloudRemove(collectionName, id, at) {
     try {
-      if (typeof CloudSync !== 'undefined') CloudSync.remove(collectionName, id);
+      if (typeof CloudSync !== 'undefined') CloudSync.remove(collectionName, id, at);
     } catch (e) { console.error('Cloud sync remove skipped', e); }
+  },
+  // Waits (at most `ms`) for records being sent to the account, so a page can
+  // navigate away right after saving.
+  flush(ms = 4000) {
+    try {
+      if (typeof CloudSync !== 'undefined' && CloudSync.flush) return CloudSync.flush(ms);
+    } catch (e) { /* nothing to wait for */ }
+    return Promise.resolve(true);
+  },
+
+  // Saves (inserts or replaces by id) and returns the record, or null if it
+  // could not be stored on this device.
+  _save(name, prefix, record) {
+    const key = this.KEYS[name];
+    const list = this._list(key);
+    record.id = record.id || (prefix + '-' + Date.now());
+    const idx = list.findIndex(r => r.id === record.id);
+    this._stamp(record, idx >= 0 ? list[idx] : null);
+    if (idx >= 0) list[idx] = record; else list.push(record);
+    if (!this._set(key, list)) return null;
+    this._cloudPush(name, record);
+    return record;
+  },
+  _delete(name, id) {
+    const key = this.KEYS[name];
+    const all = this._list(key);
+    const gone = all.find(r => r.id === id);
+    if (!this._set(key, all.filter(r => r.id !== id))) return;
+    const at = Math.max(Date.now(), (Number(gone && gone.updatedAt) || 0) + 1);
+    this._cloudRemove(name, id, at);
   },
 
   // ---- Assessments ----
   getAssessments() {
-    return this._get(this.KEYS.assessments);
+    return this._list(this.KEYS.assessments);
   },
   saveAssessment(assessment) {
-    const list = this.getAssessments();
-    assessment.id = assessment.id || ('A-' + Date.now());
-    list.push(assessment);
-    this._set(this.KEYS.assessments, list);
-    this._cloudPush('assessments', assessment);
-    return assessment;
+    return this._save('assessments', 'A', assessment);
   },
   deleteAssessment(id) {
-    const list = this.getAssessments().filter(a => a.id !== id);
-    this._set(this.KEYS.assessments, list);
-    this._cloudRemove('assessments', id);
+    this._delete('assessments', id);
   },
 
   // ---- Permits ----
   // Permits saved before other permit types existed have no permitType; they
   // are lifting permits, so they read back as such.
   getPermits() {
-    return this._get(this.KEYS.permits).map(p => (p && !p.permitType) ? Object.assign({}, p, { permitType: 'lifting' }) : p);
+    return this._list(this.KEYS.permits).map(p => !p.permitType ? Object.assign({}, p, { permitType: 'lifting' }) : p);
   },
   savePermit(permit) {
     permit.permitType = permit.permitType || 'lifting';
-    const list = this.getPermits();
-    const idx = list.findIndex(p => p.id === permit.id);
-    if (idx >= 0) {
-      list[idx] = permit;
-    } else {
-      permit.id = permit.id || ('P-' + Date.now());
-      list.push(permit);
-    }
-    this._set(this.KEYS.permits, list);
-    this._cloudPush('permits', permit);
-    return permit;
+    return this._save('permits', 'P', permit);
   },
   deletePermit(id) {
-    const list = this.getPermits().filter(p => p.id !== id);
-    this._set(this.KEYS.permits, list);
-    this._cloudRemove('permits', id);
+    this._delete('permits', id);
   },
+
+  // The signed-in account whose records are on this device, if known.
+  _ownerUid() {
+    try {
+      const uid = localStorage.getItem(this.DEVICE_KEYS.owner);
+      if (uid) return uid;
+      if (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length && firebase.auth().currentUser) {
+        return firebase.auth().currentUser.uid;
+      }
+    } catch (e) { /* not signed in */ }
+    return null;
+  },
+
   // Each permit type has its own prefix and counter (lifting keeps the
-  // original LP counter). The next number also accounts for permits already
-  // on file, so a wiped or new device never reissues a number.
+  // original LP counter), and the number carries the issuer's code (see
+  // PermitTypes.nextNumber). The next number also accounts for permits
+  // already on file, so a wiped or new device never reissues a number.
   nextPermitNumber(type = 'lifting') {
+    if (this._swapping()) return '';
     const t = typeof PermitTypes !== 'undefined' ? PermitTypes.byKey(type) : null;
     const prefix = t ? t.prefix : 'LP';
     const key = type === 'lifting' ? this.KEYS.counter : `${this.KEYS.counter}_${type}`;
@@ -102,66 +169,80 @@ const DB = {
     const year = new Date().getFullYear();
     const numbers = this.getPermits().map(p => p.permitNumber);
     let next;
-    if (typeof PermitTypes !== 'undefined') next = PermitTypes.nextNumber(prefix, year, counter, numbers);
-    else next = { seq: counter + 1, number: `${prefix}-${year}-${String(counter + 1).padStart(4, '0')}` };
-    localStorage.setItem(key, String(next.seq));
+    if (typeof PermitTypes !== 'undefined') {
+      next = PermitTypes.nextNumber(prefix, year, counter, numbers, PermitTypes.issuerCode(this._ownerUid()));
+    } else {
+      next = { seq: counter + 1, number: `${prefix}-${year}-${String(counter + 1).padStart(4, '0')}` };
+    }
+    try { localStorage.setItem(key, String(next.seq)); } catch (e) { console.error('Could not store the permit counter', e); }
     return next.number;
   },
 
   // ---- Equipment checklists (monthly inspection & maintenance) ----
   getChecklists() {
-    return this._get(this.KEYS.checklists);
+    return this._list(this.KEYS.checklists);
   },
   saveChecklist(checklist) {
-    const list = this.getChecklists();
-    const idx = checklist.id ? list.findIndex(c => c.id === checklist.id) : -1;
-    if (idx >= 0) {
-      list[idx] = checklist;
-    } else {
-      checklist.id = checklist.id || ('C-' + Date.now());
-      list.push(checklist);
-    }
-    this._set(this.KEYS.checklists, list);
-    this._cloudPush('checklists', checklist);
-    return checklist;
+    return this._save('checklists', 'C', checklist);
   },
   deleteChecklist(id) {
-    const list = this.getChecklists().filter(c => c.id !== id);
-    this._set(this.KEYS.checklists, list);
-    this._cloudRemove('checklists', id);
+    this._delete('checklists', id);
   },
 
   // ---- Backup / restore ----
   exportAll() {
+    const clean = (list) => list.map(r => { const c = Object.assign({}, r); delete c._pending; delete c._restored; delete c._legacy; return c; });
     return {
       exportedAt: new Date().toISOString(),
-      assessments: this.getAssessments(),
-      permits: this.getPermits(),
-      checklists: this.getChecklists()
+      assessments: clean(this.getAssessments()),
+      permits: clean(this.getPermits()),
+      checklists: clean(this.getChecklists())
     };
   },
-  // Backups written before checklists existed simply have no `checklists` key —
-  // `|| []` keeps those files importable, and a merge of an old backup leaves
-  // any checklists already on this device alone.
+  // Adds the records in a backup file to this device and sends them to the
+  // account. Returns how many of each were imported.
+  //   merge:   records already here (same id) are kept; the rest are added
+  //            with their own save times, so a newer copy in the account wins.
+  //   replace: the lists on this device become exactly the backup, and the
+  //            backup's copies become the newest ones. Records in the account
+  //            that are not in the backup are not deleted from it.
+  // Either way a restored record that had been deleted comes back (the
+  // `_restored` flag lets it win over the account's record of the delete).
+  // Backups written before checklists existed simply have no `checklists` key,
+  // so a merge of an old backup leaves the checklists on this device alone.
   importAll(data, mode = 'merge') {
-    if (mode === 'replace') {
-      this._set(this.KEYS.assessments, data.assessments || []);
-      this._set(this.KEYS.permits, data.permits || []);
-      this._set(this.KEYS.checklists, data.checklists || []);
-      return;
-    }
-    const existingA = this.getAssessments();
-    const existingP = this.getPermits();
-    const existingC = this.getChecklists();
-    const idsA = new Set(existingA.map(a => a.id));
-    const idsP = new Set(existingP.map(p => p.id));
-    const idsC = new Set(existingC.map(c => c.id));
-    (data.assessments || []).forEach(a => { if (!idsA.has(a.id)) existingA.push(a); });
-    (data.permits || []).forEach(p => { if (!idsP.has(p.id)) existingP.push(p); });
-    (data.checklists || []).forEach(c => { if (!idsC.has(c.id)) existingC.push(c); });
-    this._set(this.KEYS.assessments, existingA);
-    this._set(this.KEYS.permits, existingP);
-    this._set(this.KEYS.checklists, existingC);
+    const counts = { assessments: 0, permits: 0, checklists: 0 };
+    if (this._blockedBySwap()) return counts;
+    const PREFIX = { assessments: 'A', permits: 'P', checklists: 'C' };
+    const src = data && typeof data === 'object' ? data : {};
+    Object.keys(counts).forEach(name => {
+      const key = this.KEYS[name];
+      const incoming = (Array.isArray(src[name]) ? src[name] : [])
+        .filter(r => r && typeof r === 'object' && !Array.isArray(r) && r.deleted !== true);
+      if (mode !== 'replace' && !incoming.length) return;
+      const current = this._list(key);
+      const previous = new Map(current.map(r => [r.id, r]));
+      const list = mode === 'replace' ? [] : current;
+      const ids = new Set(list.map(r => r.id));
+      const added = [];
+      incoming.forEach((r, i) => {
+        const rec = JSON.parse(JSON.stringify(r));
+        if (!rec.id) rec.id = `${PREFIX[name]}-${Date.now()}-${i}`;
+        if (ids.has(rec.id)) return;
+        ids.add(rec.id);
+        if (mode === 'replace') this._stamp(rec, previous.get(rec.id));
+        else rec._pending = true;
+        rec._restored = true;
+        list.push(rec);
+        added.push(rec);
+      });
+      if (!this._set(key, list)) return;
+      counts[name] = added.length;
+      try {
+        if (typeof CloudSync !== 'undefined' && CloudSync.pushPending) CloudSync.pushPending(name);
+      } catch (e) { console.error('Cloud sync push skipped', e); }
+    });
+    return counts;
   }
 };
 

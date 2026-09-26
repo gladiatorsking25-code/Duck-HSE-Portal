@@ -241,10 +241,16 @@ const AssessmentDetail = (function () {
         </div>`).join('')}`;
   }
 
+  // Only data: images made by this app are shown; anything else in a record
+  // (for example from an edited backup file) is left out.
+  function safeImg(src) {
+    return (typeof src === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(src)) ? src : '';
+  }
+
   function diagramSection(a) {
     const shots = [
-      a.diagram3D ? { src: a.diagram3D, label: '3D view' } : null,
-      a.diagramSketch ? { src: a.diagramSketch, label: 'Plan sketch' } : null
+      safeImg(a.diagram3D) ? { src: a.diagram3D, label: '3D view' } : null,
+      safeImg(a.diagramSketch) ? { src: a.diagramSketch, label: 'Plan sketch' } : null
     ].filter(Boolean);
     if (!shots.length) {
       return `<div class="section-title">Lift diagrams</div>
@@ -255,10 +261,10 @@ const AssessmentDetail = (function () {
       <div style="display:flex; gap:14px; flex-wrap:wrap;">
         ${shots.map(s => `
           <div style="flex:1; min-width:280px;">
-            <img class="lightbox-img" src="${s.src}" alt="${esc(s.label)}">
+            <img class="lightbox-img" src="${esc(s.src)}" alt="${esc(s.label)}">
             <div style="text-align:center; margin-top:6px;">
               <span class="hint">${esc(s.label)}</span>
-              <a class="btn btn-sm no-print" style="margin-left:8px;" href="${s.src}" download="${esc(a.id || 'assessment')}-${s.label.replace(/\s+/g, '-').toLowerCase()}.png">Download</a>
+              <a class="btn btn-sm no-print" style="margin-left:8px;" href="${esc(s.src)}" download="${esc(a.id || 'assessment')}-${s.label.replace(/\s+/g, '-').toLowerCase()}.png">Download</a>
             </div>
           </div>`).join('')}
       </div>`;

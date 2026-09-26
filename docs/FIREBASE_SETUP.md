@@ -76,31 +76,20 @@ doesn't, check the browser console for a rules/permission error.
 
 ## Step 5 — Subscriptions via Google Play Billing **[you do this]**
 
-Only needed when you're ready to charge. Full instructions are in the header
-comment of `functions/index.js`; in short:
+Only needed for the Android app. The purchase flow is already built
+(`public/js/billing.js`, `functions/play.js`). Follow `SECURITY.md` §6 steps
+5–10 (Play Developer API, Play Console API access with **View financial data**
+and **Manage orders and subscriptions**, and the Play notifications topic, which
+is required) and `PLAY_STORE_LAUNCH.md` §3a (the subscription product and a test
+purchase before release).
 
-1. Upgrade the project to **Blaze** (required to deploy Cloud Functions).
-2. Enable the **Google Play Android Developer API** in Google Cloud Console for
-   the same project.
-3. In **Play Console → Setup → API access**, link the Cloud project and grant the
-   functions service account "View financial data".
-4. `cd functions && npm install`, then from the project root
-   `firebase deploy --only functions`.
-5. In your **TWA/Android wrapper**, add the Play Billing / **Digital Goods API**
-   purchase flow. After a successful purchase, call the `verifyPlayPurchase`
-   function with the returned purchase token (sample call is in
-   `functions/index.js`). It writes `subscriptionStatus: 'active'` to the user's
-   Firestore doc, which the rules protect from client tampering.
-6. Gate premium features in the UI by reading that `subscriptionStatus` — this
-   part is a product decision, so it's left for you to place where you want the
-   paywall (e.g. cloud sync = paid, local use = free).
+## Step 6 — Account deletion
 
-## Step 6 — Before charging money: account deletion **[you do this]**
-
-Google requires an account-deletion path. Add a "Delete my account & data" action
-(a small Admin-SDK Cloud Function deleting the Auth user + their Firestore doc)
-and/or a public deletion-request page, then register it under **Play Console →
-App content → Data deletion**. See `PLAY_DATA_SAFETY.md`.
+Deletion requests are handled with the admin-only `adminDeleteAccount` function
+(Admin page → **Delete account**). The steps, including what to do with project
+backups, are in `DEPLOY.md` → **Account deletion requests**. Register the public
+`account-deletion.html` page under **Play Console → App content → Data
+deletion**; see `PLAY_DATA_SAFETY.md`.
 
 ---
 

@@ -162,7 +162,8 @@ if (typeof ADOSH_COP_REFERENCE !== 'undefined') {
     const raw = localStorage.getItem('cla_tos_privacy_accepted_v1');
     if (!raw) { el.textContent = 'Not yet accepted on this device'; return; }
     const rec = JSON.parse(raw);
-    el.textContent = `Accepted ${fmtDate(rec.acceptedAt)} (version ${rec.version})`;
+    el.textContent = `Accepted ${fmtDate(rec.acceptedAt)} (version ${rec.version})` +
+      (rec.onServer ? ', also recorded with your account' : '');
   } catch (e) { el.textContent = '—'; }
 })();
 

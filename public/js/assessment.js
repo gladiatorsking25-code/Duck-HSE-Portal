@@ -571,7 +571,12 @@ document.getElementById('btnSave').addEventListener('click', async () => {
     ? { jibMode: true, boomLength: r.spec.maxBoomLength, jibLength: r.record.jibLength, jibOffset: r.record.jibOffset, boomAngle: r.record.boomAngle, workingRadius: null }
     : { jibMode: false, boomLength: r.record.boomLength, workingRadius: r.record.workingRadius });
 
-  DB.saveAssessment(record);
+  // DB has already told the person why when it could not store the record.
+  if (!DB.saveAssessment(record)) {
+    btnSave.disabled = false;
+    confirmEl.textContent = 'Not saved.';
+    return;
+  }
   let linked = '';
   if (record.projectId && typeof ProjectLink !== 'undefined') {
     confirmEl.textContent = 'Saved. Adding it to the project…';

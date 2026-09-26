@@ -135,7 +135,7 @@ function populateFilters() {
   const keepM = fm.value;
   const months = [...new Set(DB.getChecklists().map(c => c.month).filter(Boolean))].sort().reverse();
   fm.innerHTML = `<option value="">${esc(I18n.t('r.allMonths'))}</option>` +
-    months.map(m => `<option value="${m}">${esc(monthLabel(m))}</option>`).join('');
+    months.map(m => `<option value="${esc(m)}">${esc(monthLabel(m))}</option>`).join('');
   fm.value = keepM;
 }
 
@@ -202,18 +202,27 @@ function render() {
             <td>${esc(typeName(c.equipmentType))}<div class="hint">${esc([c.make, c.model].filter(Boolean).join(' '))}</div></td>
             <td class="num">${esc(c.assetNo || '—')}</td>
             <td>${verdictBadge(c.verdict)}</td>
-            <td class="num">${(c.counts && c.counts.defect) || 0}</td>
+            <td class="num">${esc((c.counts && c.counts.defect) || 0)}</td>
             <td>${esc(c.inspector || '—')}</td>
             <td class="num">${Array.isArray(c.certificates) ? c.certificates.length : 0}</td>
             <td><a class="btn btn-sm btn-primary" href="checklist.html?id=${encodeURIComponent(c.id)}">${esc(I18n.t('btn.view'))}</a></td>
-            <td><button class="btn btn-sm" onclick="emailRecord('${c.id}')">${esc(I18n.t('btn.email'))}</button></td>
-            <td><button class="btn btn-sm" onclick="shareRecordReport('${c.id}')">Share</button></td>
-            <td><button class="btn btn-sm btn-danger" onclick="removeRecord('${c.id}')">${esc(I18n.t('btn.delete'))}</button></td>
+            <td><button class="btn btn-sm" data-email="${esc(c.id)}">${esc(I18n.t('btn.email'))}</button></td>
+            <td><button class="btn btn-sm" data-share="${esc(c.id)}">Share</button></td>
+            <td><button class="btn btn-sm btn-danger" data-delete="${esc(c.id)}">${esc(I18n.t('btn.delete'))}</button></td>
           </tr>`).join('')}
       </tbody>
     </table>`;
   I18n.apply(wrap);
 }
+
+// One listener for the whole table, so no record value ever becomes script.
+document.getElementById('tableWrap').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-email], [data-share], [data-delete]');
+  if (!btn) return;
+  if (btn.dataset.email != null) emailRecord(btn.dataset.email);
+  else if (btn.dataset.share != null) shareRecordReport(btn.dataset.share);
+  else removeRecord(btn.dataset.delete);
+});
 
 function removeRecord(id) {
   if (!confirm(I18n.t('msg.confirmDelete'))) return;
@@ -379,6 +388,12 @@ document.getElementById('filterMonth').addEventListener('change', render);
 
 document.addEventListener('i18n:changed', () => {
   I18n.apply();
+  populateFilters();
+  renderLegend();
+  render();
+});
+// Inspections that arrive from the account (or another tab) show up without a reload.
+document.addEventListener('cloudsync:changed', () => {
   populateFilters();
   renderLegend();
   render();

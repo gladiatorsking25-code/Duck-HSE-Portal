@@ -54,9 +54,10 @@
           <tr><td>Projects you create or join, their tracked items and activity log</td><td>Your account (Google Firebase), shared with that project's team</td></tr>
           <tr><td>Inspection checklists, permits, lift assessments, signatures, names and notes</td><td>This device (browser storage), with a copy in your account while you are signed in</td></tr>
           <tr><td>Files and photos added to a project, and that project's backups</td><td>The operator's Google Drive (a shared drive), shared with that project's team through the app</td></tr>
-          <tr><td>Certificate photos and HSE audit evidence files</td><td>This device only (browser <code>IndexedDB</code>), unless you add them to a project</td></tr>
+          <tr><td>Certificate photos and HSE audit evidence files</td><td>This device only (browser <code>IndexedDB</code>), unless you add them to a project or upload an audit pack to Google Drive</td></tr>
+          <tr><td>HSE audit packs you upload with <strong>Upload to Drive</strong></td><td>Your own Google Drive, under your Google account. They go straight from your device to your Drive; the operator never receives them, and the Google access token is kept in the page's memory only. They stay under your control: delete them in Google Drive.</td></tr>
           <tr><td>Payment details</td><td>Held by Stripe (website) or Google Play (Android app), never by this app. The app keeps only your plan and its status.</td></tr>
-          <tr><td>Terms / Privacy acceptance record</td><td>This device only</td></tr>
+          <tr><td>Terms / Privacy acceptance record (which version you accepted, and when)</td><td>Your account (Google Firebase), and this device</td></tr>
         </table>
       </div>
 
@@ -65,6 +66,7 @@
         <p style="margin-top:0; color:var(--ink-soft); font-size:13.5px;">
           This permanently deletes every checklist, permit, assessment, signature, note, photo,
           saved preference, and the offline copy of the app from this device, then signs you out.
+          It also removes records that other people who signed in on this device left here.
           It cannot be undone. <strong>Export a backup first</strong> from Settings &amp; backup if
           you need the records. Copies kept in your account are not touched; to delete those, use
           option 3.
@@ -110,12 +112,15 @@
         <p style="margin-top:0; color:var(--ink-soft); font-size:13.5px;">
           To delete your account and every record kept in it, email the address below from the
           address the account is registered to, with the subject
-          <strong>"Delete my account and data"</strong>:
+          <strong>"Delete my account and data"</strong>. The operator checks the request and then
+          deletes the account with an admin tool. What that removes is listed below.
         </p>
         <table class="spec-table">
           <tr><td>Email</td><td><a id="contactEmail" href="#">—</a></td></tr>
           <tr id="contactPhoneRow" hidden><td>Phone</td><td><a id="contactPhone" href="#">—</a></td></tr>
-          <tr><td>What is deleted</td><td>Account record, sign-in identity, the records copied to your account, and your membership of every project. Projects you own are handed to another manager or deleted, as you choose. Files you added to a project stay with that project for its team, unless you ask for them to be removed. Your email may also remain in that project's existing backups until newer backups replace them (at most about a month for nightly backups); on request, the operator deletes those backups sooner.</td></tr>
+          <tr><td>What is deleted</td><td>Your sign-in, your account record (including your Terms and Privacy acceptance record) and the checklists, permits and assessments copied to your account. You are taken off every project: your email is removed from its member list, its invitations and its activity log. Projects you own are handed to another manager or deleted, as you choose. Files you added to a project stay with that project for its team, unless you ask for them to be removed.</td></tr>
+          <tr><td>Project backups</td><td>Your email may remain in a project's existing backups. Backups are kept by number, not by date: the last 30 nightly backups (taken only on days the project changed), up to 20 made by hand and up to 10 made just before a restore. In a project that rarely changes this can be many months. On request, the operator deletes those backups sooner.</td></tr>
+          <tr><td>Not affected</td><td>Audit packs you uploaded to your own Google Drive. They stay in your Drive, under your control; delete them there if you no longer need them.</td></tr>
           <tr><td>What may be retained, and why</td><td>Records the operator is required to keep by law (for example accounting/VAT records of a paid subscription), retained only for the statutory period and then deleted</td></tr>
           <tr><td>Response time</td><td>Acknowledged within 7 days; completed within 30 days</td></tr>
         </table>
@@ -191,12 +196,33 @@ if (typeof FIREBASE_READY === 'undefined' || !FIREBASE_READY) {
 async function eraseDevice() {
   try { localStorage.clear(); } catch (e) { console.error(e); }
   try { sessionStorage.clear(); } catch (e) { console.error(e); }
-  // Certificate photos are stored in IndexedDB, which localStorage.clear() does
-  // not touch — delete that database so no personal document images remain.
-  try { indexedDB.deleteDatabase('cla_certificate_store_v1'); } catch (e) { console.error(e); }
-  // HSE audit checklists and their evidence files (certificates, IDs,
-  // incident reports) live in their own IndexedDB database.
-  try { indexedDB.deleteDatabase('cla_audit_store_v1'); } catch (e) { console.error(e); }
+  // The account's offline copy kept by Firestore: stop it before deleting.
+  try {
+    if (typeof firebase !== 'undefined' && firebase.apps.length) {
+      const fs = firebase.firestore();
+      await fs.terminate();
+      await fs.clearPersistence();
+    }
+  } catch (e) { console.error(e); }
+  // Certificate photos and HSE audit checklists with their evidence files
+  // (certificates, IDs, incident reports) live in IndexedDB, which
+  // localStorage.clear() does not touch. Each account that used this device
+  // has its own copy ('<name>:<uid>'), and records parked by other accounts
+  // are in the device stash, so every one of them goes.
+  const bases = ['cla_certificate_store_v1', 'cla_audit_store_v1', 'cla_device_stash_v1'];
+  let names = bases.slice();
+  try {
+    if (indexedDB.databases) {
+      const all = (await indexedDB.databases()).map((d) => d.name).filter(Boolean);
+      names = names.concat(all.filter((n) => bases.some((b) => n.startsWith(b + ':')) || n.startsWith('firestore/')));
+    }
+  } catch (e) { console.error(e); }
+  await Promise.all(Array.from(new Set(names)).map((n) => new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(n);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    } catch (e) { console.error(e); resolve(); }
+  })));
 
   // Drop the offline cache and unregister the service worker too, so no copy
   // of the app's pages is left behind on the device.
@@ -228,7 +254,7 @@ $('wipeForm').addEventListener('submit', async (e) => {
     wipeMessage('danger', 'That password is not right, so nothing was erased.');
     return;
   }
-  if (!confirm('This permanently deletes ALL checklists, permits, assessments, signatures and photos stored on this device, and the app\'s offline copy. Export a backup first if you have not already. Continue?')) {
+  if (!confirm('This permanently deletes ALL checklists, permits, assessments, signatures and photos stored on this device, including those of anyone else who has signed in here, and the app\'s offline copy. Export a backup first if you have not already. Continue?')) {
     btn.disabled = false;
     return;
   }

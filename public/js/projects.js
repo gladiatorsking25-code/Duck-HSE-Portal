@@ -186,7 +186,10 @@ const Projects = (function () {
     async upsertLinkedItem(projectId, ref, input) {
       await fb();
       const items = col().doc(projectId).collection('items');
-      const found = await items.where('ref.kind', '==', ref.kind).where('ref.id', '==', ref.id).limit(1).get();
+      // Asked of the server, never the offline copy: offline that copy may not
+      // hold the item yet, and a second one would be queued and added later.
+      // Offline this fails (js/project-link.js says so) and nothing is queued.
+      const found = await items.where('ref.kind', '==', ref.kind).where('ref.id', '==', ref.id).limit(1).get({ source: 'server' });
       const existing = found.empty ? null : withId(found.docs[0]);
       const merged = Object.assign({}, existing || {}, input, { ref, type: ref.kind });
       return this.saveItem(projectId, existing ? existing.id : null, merged);

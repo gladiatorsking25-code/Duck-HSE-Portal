@@ -152,6 +152,8 @@ document.getElementById('search').addEventListener('input', render);
 typeSel.addEventListener('change', render);
 document.getElementById('filterStatus').addEventListener('change', render);
 document.getElementById('filterType').addEventListener('change', render);
+// Permits that arrive from the account (or another tab) show up without a reload.
+document.addEventListener('cloudsync:changed', render);
 render();
 </script>
 <script src="js/pwa.js"></script>

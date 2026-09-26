@@ -8,6 +8,7 @@
 <script src="js/firebase-config.js"></script>
 <script src="js/firebase-init.js"></script>
 <script src="js/firebase-auth.js"></script>
+<script src="js/consent.js"></script>
 <!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#16283a">
@@ -48,6 +49,16 @@
           <label for="cloudPassword">Password</label>
           <input type="password" id="cloudPassword" autocomplete="current-password" required minlength="6">
         </div>
+        <!-- Sign-up only: the Terms and Privacy Notice are accepted before the
+             account exists, and the acceptance is then recorded with it. -->
+        <label id="termsRow" hidden style="display:flex; gap:9px; align-items:flex-start; font-size:12.5px; line-height:1.5; color:var(--ink-soft); margin:2px 0 12px;">
+          <input type="checkbox" id="termsAccept" style="margin-top:3px; width:16px; height:16px; flex-shrink:0;">
+          <span>I have read and accept the <a href="terms.html" target="_blank" rel="noopener">Terms of Use</a>
+          and the <a href="privacy.html" target="_blank" rel="noopener">Privacy Notice</a>, including that
+          my account and records are stored by Google Firebase outside the UAE. I understand this tool
+          does not replace competent-person judgement or, for lifting, the manufacturer's load chart and
+          a qualified Appointed Person's sign-off.</span>
+        </label>
         <div id="cloudLoginError"></div>
         <button class="btn btn-primary" type="submit" style="width:100%; margin-top:8px;" id="cloudSubmitBtn">Sign in</button>
       </form>
@@ -100,6 +111,8 @@ if (!FB_ON) {
     submitBtn.textContent = m === 'signin' ? 'Sign in' : 'Create account & start trial';
     $('toggleModeLink').textContent = m === 'signin' ? 'New here? Create an account' : 'Have an account? Sign in';
     $('trialNote').textContent = m === 'signin' ? '' : `After the ${trialDays}-day trial, a subscription is required. You can cancel anytime.`;
+    $('termsRow').hidden = m === 'signin';
+    $('termsAccept').required = m === 'signup';
     cloudErr.innerHTML = '';
   }
   setMode('signin');
@@ -114,20 +127,42 @@ if (!FB_ON) {
     catch (err) { showBanner(cloudErr, 'danger', err.message); }
   });
 
+  // The acceptance ticked for sign-up is recorded the moment the new account
+  // exists: on this device at once, and with the account in the background
+  // (the next page retries if this one moves on first). It is done from the
+  // auth listener because the watcher below can leave this page before
+  // CloudAuth.signUp() has finished.
+  let signupConsentPending = false;
+  function recordSignupConsent(user) {
+    if (!signupConsentPending || !user) return;
+    signupConsentPending = false;
+    if (typeof recordConsentAcceptance === 'function') recordConsentAcceptance(user.uid);
+  }
+  firebaseReadyPromise.then((fb) => { if (fb) fb.auth().onAuthStateChanged(recordSignupConsent); }).catch(() => {});
+
   $('cloudLoginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = $('cloudEmail').value.trim();
     const password = $('cloudPassword').value;
     cloudErr.innerHTML = '';
+    if (mode === 'signup' && !$('termsAccept').checked) {
+      showBanner(cloudErr, 'warn', 'Please read and accept the Terms of Use and Privacy Notice to create an account.');
+      return;
+    }
     submitBtn.disabled = true;
     submitBtn.textContent = 'Please wait…';
     try {
-      if (mode === 'signup') await CloudAuth.signUp(email, password);
-      else await CloudAuth.signIn(email, password);
+      if (mode === 'signup') {
+        signupConsentPending = true;
+        recordSignupConsent(await CloudAuth.signUp(email, password)); // if the listener has not already
+      } else {
+        await CloudAuth.signIn(email, password);
+      }
       // Don't hard-redirect here — Access.handleLoginPage()'s watcher routes to
       // the app (if entitled) or the paywall (if the trial has ended).
       submitBtn.textContent = 'Signing in…';
     } catch (err) {
+      signupConsentPending = false;
       showBanner(cloudErr, 'danger', err.message || 'Sign-in failed.');
       submitBtn.disabled = false;
       setMode(mode);

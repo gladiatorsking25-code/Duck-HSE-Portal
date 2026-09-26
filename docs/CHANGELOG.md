@@ -11,6 +11,82 @@ No install; runs in any modern browser on phone, tablet or desktop.
 
 ## Changelog
 
+- **Pre-launch fixes (v1.13.0)**. A final check of the whole portal before
+  selling found these, and all are fixed:
+  - **Payments.** Card checkout shows on phone and Chromebook browsers again (the
+    page took any Chrome on Android for the Android app). Inside the Android app
+    only Google Play is offered, never card or invoice (`?src=twa` start URL).
+    A Google Play purchase belongs to one account: another account cannot
+    unlock itself with it, and an admin suspension is kept (`functions/play.js`).
+    The app checks Play once per launch, so renewals unlock without a tap, and
+    purchases are acknowledged by the server. Card checkout asks Stripe first,
+    so nobody pays twice while a webhook is late; a test-mode customer left over
+    after going live is replaced; suspended accounts cannot check out and see a
+    suspended message, and a suspended card customer can still open Stripe's
+    billing page to cancel. If a Play purchase cannot be confirmed at once, or
+    Play is slow to start, the app checks again. Terms and Privacy links sit
+    next to the plans.
+  - **Android app.** Play Billing is switched on in `twa-manifest.json`,
+    `public/.well-known/assetlinks.json` is added (put in the fingerprint), and
+    `PLAY_STORE_LAUNCH.md` describes Hostinger and a Bubblewrap flow that works.
+    Play notifications (RTDN) are now a required step (`SECURITY.md` §6).
+  - **Records on every device.** Inspection checklists now come back from the
+    account like permits and assessments. Deletes reach other devices, saves
+    made offline or cut off by leaving the page are sent later, and pages
+    refresh when records arrive. Import uploads what it restores and refuses
+    records with damaged ids. Records saved before this version stay on the
+    device they were on until they are edited, so old deletes do not come back.
+    Offline saves no longer wait 5 seconds, an offline change never adds a
+    second item to a project, and the photos of an inspection deleted on
+    another device are removed too.
+  - **Shared devices.** Each account sees only its own records. Another person's
+    records are parked on the device and come back when they sign in again;
+    nothing is deleted. If that handover fails (a full disk, for example), the
+    other person's records stay hidden and the new person is signed out.
+    Erasing the device removes every account's records.
+  - **After a trial or subscription ends** people can still open their projects
+    and Settings read-only: view, download files and backups, export their
+    records. Only adding and changing needs a subscription, and so does
+    removing team members or cancelling invites; leaving a project does not.
+  - **Safer files.** Audit pack files are typed from their file name, never from
+    the pack, and only images, PDFs, audio and video open in a tab; everything
+    else downloads. PDF, video and audio previews now work on the live site.
+    Assessment history shows names as text.
+  - **Tighter rules.** A person can only change their display name and consent
+    record on their profile; personal records need access to change; activity
+    entries carry the signed-in email. File uploads need a verified email, trial
+    accounts get 200 MB (`DRIVE_TRIAL_QUOTA_MB`), and all projects together are
+    capped (`DRIVE_TOTAL_QUOTA_MB`). Project backups count toward those limits
+    too. Back up now and Restore need a verified email and are limited to 10 a
+    day per project. Trial accounts can fill at most 80% of the portal's space,
+    so the rest stays free for paying customers.
+  - **Account deletion.** Admins delete an account from the Admin page
+    (`adminDeleteAccount`) and can find any account by its email address; the
+    steps are in `DEPLOY.md`. Projects that only the leaving person belongs to
+    are deleted with the account, files and backups included, unless they ask
+    to keep them. A deleted account is not brought back by a late payment
+    notice or a page left open, its invites are withdrawn everywhere, and other
+    people's addresses in project history are left as they were. Sign-up asks
+    to accept the Terms and Privacy Notice, and every acceptance is recorded
+    with the account. The Privacy Notice and deletion page now describe the
+    Drive upload of audit packs and how long backups really last. Everyone
+    accepts the updated notice once (consent version 2026-09-25).
+  - **Hosting.** Cloud Functions run on Node.js 22: **redeploy the functions
+    before 30 October 2026**, when Node.js 20 deploys stop
+    (`cd functions && npm install && firebase deploy --only functions`).
+    `www.` visitors go to the address without it, so sign-in and payments stay
+    on one address (`APP_ORIGIN` must be that address). Scripts revalidate after
+    each upload, the app starts offline with the Firebase scripts it cached
+    (only a copy that downloaded cleanly is kept), fonts load in the installed
+    app, and email fields no longer zoom on iPhones.
+  - **Smaller things.** Permit numbers carry a short issuer code
+    (`HW-2026-K7Q2-0007`) so two issuers never share a number. Lift assessment
+    links open the assessment. Settings import checks the file, refuses project
+    backups and asks Merge, Replace or Cancel. The project CSV export has every
+    item. The crane card no longer tells customers to edit code.
+  - **Tests.** New unit tests for Play purchases, sync, read-only access,
+    consent, hosting and account deletion; more rules, Drive and browser tests.
+
 - **Go-live guide and deploy tools (no change to the app itself)**
   - `docs/DEPLOY.md`: one guide, in order, from an empty Hostinger site to taking
     payments: tools, Firebase console settings, Stripe, function settings, Google

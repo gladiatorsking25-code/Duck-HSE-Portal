@@ -53,9 +53,10 @@ request; it is not transmitted anywhere by the app.
 - Is all of the user data collected by your app encrypted in transit? → **Yes.**
   (Firebase/Firestore and Google Play Billing all use HTTPS/TLS by default.)
 - Do you provide a way for users to request that their data be deleted? → **Yes.**
-  (In-app: users can delete individual assessments/permits and use "Erase all
-  local data"; for full account deletion, provide the account-deletion path
-  Google now requires — see the note at the bottom.)
+  (In-app: users can delete individual assessments/permits and erase all data on
+  the device; full account deletion is requested from the public
+  `account-deletion.html` page and carried out by the operator — see the note at
+  the bottom.)
 
 **Data types to declare** — for each, Google asks: *Collected? Shared? Processed
 ephemerally? Optional or required? Purposes?* Recommended answers:
@@ -66,13 +67,25 @@ ephemerally? Optional or required? Purposes?* Recommended answers:
 | **Personal info → Email address** | Yes | No | App functionality; Account management | Used as the cloud account login identifier (Firebase Auth). |
 | **Personal info → User IDs** | Yes | No | App functionality; Account management | Firebase Auth UID; ties records to the account. |
 | **Personal info → Other info** | Yes | No | App functionality | Free-text notes and on-screen **signatures** captured for permit sign-off. Declare here (there is no dedicated "signature" type) and describe it in the field. |
-| **Photos and videos → Photos** | Yes | No | App functionality | Site photos a user adds to a project's files (stored in the operator's Google Drive through Cloud Functions). Optional. |
-| **Files and docs** | Yes | No | App functionality | Documents a user adds to a project (method statements, drawings, certificates), and nightly project backups, stored in the operator's Google Drive. Optional. |
+| **Photos and videos → Photos** | Yes | No | App functionality | Site photos a user adds to a project's files (stored in the operator's Google Drive through Cloud Functions). Optional. Photos inside an audit pack a user uploads to their own Google Drive are covered too (see below). |
+| **Files and docs** | Yes | No | App functionality | Documents a user adds to a project (method statements, drawings, certificates), and nightly project backups, stored in the operator's Google Drive. Optional. Also covers HSE audit packs a user chooses to upload to **their own** Google Drive (see "Audit packs and Google Drive" below). |
 | **Financial info → Purchase history** | Yes | No | App functionality; Account management | Subscription purchase/entitlement state from Google Play Billing, used to unlock paid features. Payment *card* data is handled entirely by Google Play and is **not** collected by your app — do not tick "User payment info". |
 | **App activity / App info & performance** | No* | — | — | Only tick these if you later add analytics or crash reporting. The base app doesn't. |
 
 *Leave analytics/crash-reporting rows as "not collected" unless and until you
 actually add Firebase Analytics or Crashlytics — if you add them, revisit this.
+
+**Audit packs and Google Drive.** On an HSE audit, **Upload to Drive** (optional,
+and off until Drive settings are filled in on the audit page) signs the user in
+to Google in the browser (Google Identity Services) and sends the compiled audit
+pack, which can hold certificates, ID cards and other evidence files, straight
+from the device to the user's own Google Drive. The developer's servers are not
+in this path and never receive the pack or the access token; the token is held in
+the page's memory only. The default permission is `drive.file` (only files the
+app created or the user picked); the user can opt in to the full `drive` scope in
+Drive settings. This is a transfer the user starts, to a service they chose and
+signed in to, so it is not "sharing" in Google's sense. It is disclosed in the
+Privacy Notice, section 3c; keep this form and that section in step.
 
 **"Shared" is No across the board** in this design: data goes to Firebase as your
 *processor* (that's "collected/processed on your behalf," not "shared with a third
@@ -99,19 +112,33 @@ URL. Practically, add either:
   Play Console's **App content → Data deletion** section.
 
 **Built now:** `account-deletion.html` is the public deletion page. It is
-deliberately *not* behind `requireAuth()`, because Google requires the URL to be
+deliberately *not* behind `requireAccess()`, because Google requires the URL to be
 reachable without signing in or installing the app. It covers all three routes —
 wiping everything on the device (including the offline cache and the registered
 service worker), uninstalling, and emailing to request deletion of a cloud
 account and its synced records — and states the 30-day completion commitment and
 what may be retained for statutory accounting reasons.
 
+The operator carries out an emailed request with the admin-only
+`adminDeleteAccount` Cloud Function. It deletes the sign-in, the `users/{uid}`
+document with its records, and takes the email off every project. The page is
+honest about what is left: audit packs the user uploaded to their own Google
+Drive (theirs to delete), and project backups, which are kept by number, not by
+date — the last 30 nightly backups (taken only on days the project changed), up
+to 20 manual backups and 10 made before a restore. In a quiet project that can be
+many months, so the operator deletes that project's older backups on request.
+
 Enter its hosted URL in **Play Console → App content → Data deletion**.
 
-Still to do for a Scenario-B launch: wire the emailed request to an actual
-deletion path — a small Cloud Function using the Firebase Admin SDK that deletes
-the Auth user and their Firestore documents. The page promises 30 days; make sure
-something can actually deliver that.
+---
+
+## Consent record
+
+When someone creates an account, and on the in-app acceptance screen whenever
+the Terms or Privacy Notice change, the app stores which version was accepted
+and when (`consentVersion`, `consentAcceptedAt` in `users/{uid}`). This is
+account-management data tied to the User ID row above; it needs no separate
+data type.
 
 ---
 

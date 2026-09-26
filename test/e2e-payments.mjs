@@ -70,6 +70,8 @@ async function run() {
       if (route === 'POST /v1/checkout/sessions') return send(200, { id: 'cs_e2e', object: 'checkout.session', url: 'https://checkout.stripe.com/c/pay/cs_e2e' });
       if (route === 'POST /v1/billing_portal/sessions') return send(200, { id: 'bps_e2e', object: 'billing_portal.session', url: 'https://billing.stripe.com/p/session/e2e' });
       if (route === 'GET /v1/subscriptions/sub_e2e' && subscription) return send(200, subscription);
+      // Checkout first lists the customer's subscriptions so it never sells a second one.
+      if (route === 'GET /v1/subscriptions') return send(200, { object: 'list', url: '/v1/subscriptions', has_more: false, data: subscription ? [subscription] : [] });
       send(404, { error: { type: 'invalid_request_error', message: 'No such resource: ' + route } });
     });
   });
@@ -107,6 +109,38 @@ async function run() {
       await carol.screenshot({ path: path.join(process.env.E2E_SHOTS, 'subscribe-mobile.png'), fullPage: true });
       await carol.setViewportSize({ width: 1280, height: 800 });
     }
+
+    // 1b. Chrome on Android and Chromebooks offer the Play billing API on every
+    // website; outside the Android app it refuses. Card checkout must stay.
+    const phone = await carol.context().newPage();
+    phone.errors = [];
+    phone.on('pageerror', (e) => phone.errors.push(e.message));
+    await phone.addInitScript(() => {
+      window.getDigitalGoodsService = () => Promise.reject(new DOMException('unsupported context', 'NotSupportedError'));
+    });
+    await phone.goto(BASE + 'subscribe.html');
+    await phone.waitForSelector('.buy-btn');
+    assert.equal(await phone.getAttribute('.buy-btn', 'data-product'), 'monthly');
+    assert.match(await phone.textContent('#payPlans'), /Monthly[\s\S]*\$5[\s\S]*processed securely by Stripe/);
+    assert.equal(await phone.isVisible('#payRestore'), false);
+    assert.equal(await phone.isVisible('#payOfflineDetails'), true);
+    step('A phone browser whose Play billing API refuses still gets card checkout');
+
+    // 1c. The same phone inside the Android app (it opens index.html?src=twa):
+    // Google Play only, never card or invoice, even when Play does not answer.
+    await phone.goto(BASE + 'index.html?src=twa');
+    await phone.goto(BASE + 'subscribe.html');
+    await phone.waitForSelector('.buy-btn');
+    assert.equal(await phone.getAttribute('.buy-btn', 'data-product'), 'pro_monthly');
+    assert.doesNotMatch(await phone.textContent('#payPlans'), /Stripe/);
+    assert.equal(await phone.$('#payOfflineDetails'), null);
+    assert.equal(await phone.isVisible('#payRestore'), true);
+    assert.match(await phone.textContent('#payLegal'), /Terms of Use[\s\S]*Privacy Notice/);
+    await phone.click('.buy-btn');
+    await phone.waitForFunction(() => /not available in this copy of the app/.test(document.getElementById('payResult').textContent));
+    assert.deepEqual(phone.errors, [], 'page errors in the app');
+    await phone.close();
+    step('Inside the Android app the paywall offers only Google Play');
 
     // 2. Subscribe → the server creates a customer and a Checkout Session.
     await carol.click('.buy-btn[data-product="monthly"]');
