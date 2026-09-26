@@ -52,6 +52,7 @@
         <div class="grid grid-4" id="statCards" style="margin-top:16px;"></div>
 
         <div class="split" style="margin-top:22px;">
+          <div style="min-width:0;">
           <section aria-labelledby="itemsHeading">
             <div class="section-title" id="itemsHeading" style="margin-top:0;">Tracked items</div>
             <div class="toolbar">
@@ -69,6 +70,19 @@
             </div>
             <div id="itemsTable"></div>
           </section>
+
+          <section aria-labelledby="filesHeading" style="margin-top:22px;">
+            <div class="section-title" id="filesHeading">Files and photos</div>
+            <div class="toolbar">
+              <input type="search" id="fileSearch" placeholder="Search files…" aria-label="Search files">
+              <select id="fileCategory" aria-label="Filter by kind"></select>
+              <button class="btn btn-primary btn-sm" type="button" id="addFileBtn" hidden>+ Add files</button>
+            </div>
+            <div id="filesMsg"></div>
+            <div id="filesTable"></div>
+            <p class="item-sub" id="filesFoot" style="margin-top:8px;"></p>
+          </section>
+          </div>
 
           <aside>
             <div class="card" aria-labelledby="teamHeading">
@@ -90,6 +104,14 @@
               </form>
               <div id="teamMsg"></div>
               <button class="btn btn-sm" type="button" id="leaveBtn" hidden style="margin-top:12px;">Leave project</button>
+            </div>
+
+            <div class="card" style="margin-top:16px;" id="backupCard" hidden aria-labelledby="backupHeading">
+              <div class="section-title" id="backupHeading" style="margin-top:0;">Backups</div>
+              <p class="item-sub" style="margin:0 0 10px;">Every night, a copy of this project's tracked items and file list is saved to Google Drive if anything changed. Owners and managers can also back up now, download a backup, or put the tracked items back as they were.</p>
+              <button class="btn btn-sm" type="button" id="backupNowBtn">Back up now</button>
+              <div id="backupMsg"></div>
+              <ul class="member-list" id="backupList" style="margin-top:8px;"></ul>
             </div>
 
             <div class="card" style="margin-top:16px;" aria-labelledby="activityHeading">
@@ -124,6 +146,7 @@
       </div>
       </fieldset>
       <div id="itemRef" class="item-sub" style="margin-top:10px;"></div>
+      <div id="itemFiles"></div>
       <div id="itemMeta" class="item-sub" style="margin-top:6px;"></div>
       <div id="itemFormError"></div>
     </form>
@@ -151,7 +174,7 @@
         <div class="field"><label for="pEnd">End date</label><input type="date" id="pEnd"></div>
         <div class="field full"><label for="pDrive">Google Drive folder link</label>
           <input type="url" id="pDrive" maxlength="500" placeholder="https://drive.google.com/drive/folders/…">
-          <span class="hint">Where this project's documents, photos and certificates are kept.</span></div>
+          <span class="hint">Optional: a Drive folder your team already uses. Files added under "Files and photos" are kept in the portal's own Drive folder for this project.</span></div>
         <div class="field full"><label for="pDesc">Scope / notes</label><textarea id="pDesc" rows="3" maxlength="4000"></textarea></div>
       </div>
       <div id="projectFormError"></div>
@@ -163,10 +186,46 @@
   </div>
 </div>
 
+<!-- Add files modal -->
+<div class="modal-backdrop" id="fileModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="fileModalTitle">
+    <div class="modal-head"><h3 id="fileModalTitle" style="margin:0;">Add files</h3><button class="close-x" type="button" data-close aria-label="Close">×</button></div>
+    <form class="modal-body" id="fileForm">
+      <div class="form-grid">
+        <div class="field full"><label for="fFiles">Files *</label>
+          <input type="file" id="fFiles" multiple>
+          <span class="hint">Up to 7 MB each. Large photos are made smaller automatically. PDF, photos, Word, Excel, PowerPoint, drawings (DWG, DXF), emails, text and CSV files can be added.</span></div>
+        <div class="field"><label for="fCategory">Kind</label><select id="fCategory"></select></div>
+        <div class="field"><label for="fItem">Link to a tracked item</label><select id="fItem"></select></div>
+        <div class="field full"><label for="fNote">Note</label><input type="text" id="fNote" maxlength="500" placeholder="For example: signed copy, rev B, area 3 before clean-up"></div>
+      </div>
+      <p class="item-sub" style="margin:10px 0 0;">Files are kept in this portal's Google Drive and every member of the project can see and download them.</p>
+      <div id="fileFormMsg"></div>
+    </form>
+    <div class="modal-foot">
+      <button class="btn" type="button" data-close>Close</button>
+      <button class="btn btn-primary" type="submit" form="fileForm" id="fileSaveBtn">Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- Photo viewer -->
+<div class="modal-backdrop" id="viewModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="viewTitle" style="max-width:960px;">
+    <div class="modal-head"><h3 id="viewTitle" style="margin:0; overflow-wrap:anywhere;">Photo</h3><button class="close-x" type="button" data-close aria-label="Close">×</button></div>
+    <div class="modal-body" style="text-align:center;"><img id="viewImg" alt="" style="max-width:100%; max-height:70vh;"></div>
+    <div class="modal-foot">
+      <button class="btn" type="button" id="viewDownload">Download</button>
+      <button class="btn" type="button" data-close>Close</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/storage.js"></script>
 <script src="js/cloud-sync.js"></script>
 <script src="js/nav.js"></script>
 <script src="js/projects.js"></script>
+<script src="js/project-files.js"></script>
 <script src="js/project-page.js"></script>
 <script src="js/pwa.js"></script>
 </body>

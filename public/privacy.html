@@ -57,7 +57,9 @@
         <li>Handwritten signatures captured on-screen for permit sign-off;</li>
         <li>Free-text notes you choose to enter;</li>
         <li>Your account email address. Your password is held by Google Firebase Authentication and is never visible to the operator;</li>
-        <li>Project details you enter, the actions, inspections, incidents and other items tracked on a project, the project's activity log, and the email addresses of the people you invite to a project.</li>
+        <li>Project details you enter, the actions, inspections, incidents and other items tracked on a project, the project's activity log, and the email addresses of the people you invite to a project;</li>
+        <li>Files and photos you add to a project (for example method statements, drawings, certificates and site photos), with any note, who added each one and when. These can contain personal data, such as names on a certificate or people in a photo. Site photos in JPEG, PNG or WebP format that are larger than 2 MB are usually made smaller on your device before they are sent, which removes any location data stored inside them. Other files and photos (for example HEIC photos, smaller photos, drawings and scanned certificates) are sent as they are, including any location data stored inside them;</li>
+        <li>Backups of each project: a copy of its details, tracked items, file list and recent activity log.</li>
       </ul>
       <p>It does <strong>not</strong> collect health data, financial/payment card data
       (card payments are handled entirely by Stripe on the website, or by Google Play in the
@@ -71,10 +73,14 @@
         operator uses as a data processor. See section 3a for where it is hosted.</li>
         <li>The same checklists, permits and assessments are also kept in your device's browser storage so
         the App works without a signal.</li>
-        <li><strong>Certificate photos and HSE audit evidence files</strong> stay in your device's browser
-        storage (IndexedDB) and are not uploaded.</li>
-        <li>Members of a project can see its details, tracked items and activity log, and the email
-        addresses of the other members. Nobody else can.</li>
+        <li><strong>Project files and photos, and project backups</strong>, are stored in Google Drive, in a
+        shared drive the operator controls (Google Workspace, used as a data processor). Only the App's
+        server can reach them; members never get direct access to the Drive.</li>
+        <li><strong>Checklist certificate photos and HSE audit evidence files</strong> stay in your device's
+        browser storage (IndexedDB) and are not uploaded, unless you add them to a project as files.</li>
+        <li>Members of a project can see its details, tracked items, files and activity log, and the email
+        addresses of the other members. The project's owner and managers can also download its backups.
+        Nobody else can.</li>
         <li>The operator can access account and project data only as needed to run the service, for
         example for support, billing and preventing abuse.</li>
         <li>Clearing your browser's site data deletes the copy on that device. What is stored in your
@@ -83,7 +89,8 @@
 
       <div class="section-title">3a. Cross-border transfer</div>
       <p>The App uses <strong>Google Firebase</strong> (Firebase Authentication, Cloud Firestore
-      and Cloud Functions) as a data processor. Firebase does not currently offer a UAE
+      and Cloud Functions) and <strong>Google Drive</strong> (for project files and backups) as data
+      processors. Firebase does not currently offer a UAE
       data-region, so personal data stored in your account is
       <strong>transferred to and stored outside the UAE</strong> — in whichever Google Cloud
       region the Firestore database is created in, which is chosen once and cannot be changed
@@ -161,6 +168,9 @@
       accounting and VAT records relating to a paid subscription, which UAE tax law requires be
       kept for a set period). Retained records are kept only for that purpose and deleted at the
       end of the statutory period.</p>
+      <p>A deleted project file goes to the Google Drive trash, where it is permanently deleted after
+      30 days. Each project keeps its 30 most recent nightly backups, 20 backups made by hand and 10
+      backups made just before a restore; older backups are deleted automatically.</p>
 
       <div class="section-title">11. How to delete your data</div>
       <p>Every deletion route — erasing all data on the device, uninstalling, and requesting

@@ -26,7 +26,7 @@
 
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
-const { FieldValue } = require('firebase-admin/firestore');
+const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { google } = require('googleapis');
 
 admin.initializeApp();
@@ -260,11 +260,11 @@ function userHasAccess(u, now = Date.now()) {
     || Number(u.trialEndsAt || 0) > now;
 }
 
-async function assertSubscribed(context) {
+async function assertSubscribed(context, why) {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign in.');
   const snap = await db.collection('users').doc(context.auth.uid).get();
   if (!userHasAccess(snap.data())) {
-    throw new functions.https.HttpsError('permission-denied', 'An active subscription is required to manage a team.');
+    throw new functions.https.HttpsError('permission-denied', `An active subscription is required to ${why || 'manage a team'}.`);
   }
   return context.auth.uid;
 }
@@ -466,3 +466,87 @@ exports.stripeWebhook = functions.runWith(STRIPE_SECRETS).https.onRequest(async 
     res.status(500).send('Retry later');   // Stripe retries with backoff
   }
 });
+
+// -------------------------------------------------------------------------
+// Project files and backups in Google Drive (see files.js, project-drive.js).
+// Settings: functions/.env → DRIVE_ROOT_FOLDER_ID (the shared drive), and
+// optionally DRIVE_PROJECT_QUOTA_MB. Setup steps: docs/DEPLOY.md.
+// -------------------------------------------------------------------------
+const files = require('./files');
+const { drive } = require('./drive');
+const { makeProjectDrive } = require('./project-drive');
+let projectDriveInstance = null;
+function projectDrive() {
+  if (!projectDriveInstance) {
+    projectDriveInstance = makeProjectDrive({ db, FieldValue, Timestamp, drive: drive(), env: process.env });
+  }
+  return projectDriveInstance;
+}
+function fileError(err) {
+  if (err instanceof files.FileError || err instanceof PlanError) return new functions.https.HttpsError(err.code, err.message);
+  if (err instanceof functions.https.HttpsError) return err;
+  console.error('Project file call failed', err);
+  return new functions.https.HttpsError('internal', 'Google Drive could not be reached. Please try again.');
+}
+function signedIn(context) {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Sign in.');
+  return context.auth.uid;
+}
+const FILE_RUN = { timeoutSeconds: 120, memory: '512MB' };
+
+// data: { projectId, name, size, category, note, itemId, data (base64) }
+exports.projectFileUpload = functions.runWith(FILE_RUN).https.onCall(async (data, context) => {
+  try {
+    const uid = await assertSubscribed(context, 'add files');
+    const d = data || {};
+    return await projectDrive().uploadFile({
+      uid, email: context.auth.token.email, projectId: d.projectId, data: d.data,
+      input: { name: d.name, size: d.size, category: d.category, note: d.note, itemId: d.itemId }
+    });
+  } catch (err) { throw fileError(err); }
+});
+
+// Any member may download, even with a lapsed subscription (read-only access).
+exports.projectFileDownload = functions.runWith(FILE_RUN).https.onCall(async (data, context) => {
+  try {
+    const uid = signedIn(context);
+    return await projectDrive().downloadFile({ uid, projectId: (data || {}).projectId, fileId: (data || {}).fileId });
+  } catch (err) { throw fileError(err); }
+});
+
+exports.projectFileDelete = functions.https.onCall(async (data, context) => {
+  try {
+    const uid = await assertSubscribed(context, 'delete files');
+    return await projectDrive().deleteFile({ uid, email: context.auth.token.email, projectId: (data || {}).projectId, fileId: (data || {}).fileId });
+  } catch (err) { throw fileError(err); }
+});
+
+exports.projectBackupNow = functions.runWith(FILE_RUN).https.onCall(async (data, context) => {
+  try {
+    const uid = await assertSubscribed(context, 'back up a project');
+    return await projectDrive().backupNow({ uid, email: context.auth.token.email, projectId: (data || {}).projectId });
+  } catch (err) { throw fileError(err); }
+});
+
+exports.projectBackupDownload = functions.runWith(FILE_RUN).https.onCall(async (data, context) => {
+  try {
+    const uid = signedIn(context);
+    return await projectDrive().downloadBackup({ uid, projectId: (data || {}).projectId, backupId: (data || {}).backupId });
+  } catch (err) { throw fileError(err); }
+});
+
+exports.projectRestoreItems = functions.runWith({ timeoutSeconds: 300, memory: '512MB' }).https.onCall(async (data, context) => {
+  try {
+    const uid = await assertSubscribed(context, 'restore a backup');
+    return await projectDrive().restoreItems({ uid, email: context.auth.token.email, projectId: (data || {}).projectId, backupId: (data || {}).backupId });
+  } catch (err) { throw fileError(err); }
+});
+
+// Every night at 02:00 UAE time: give back the space of files deleted 30 days
+// ago, then back up each project that changed.
+exports.projectBackupsDaily = functions.runWith({ timeoutSeconds: 540, memory: '1GB' })
+  .pubsub.schedule('every day 02:00').timeZone('Asia/Dubai')
+  .onRun(async () => {
+    const tally = await projectDrive().dailyBackups();
+    console.log('Daily project backups', tally);
+  });

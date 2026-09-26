@@ -3,10 +3,16 @@
 //   npm run test:e2e
 // Needs Chromium for Playwright (CHROMIUM_PATH, or Playwright's default).
 import path from 'node:path';
+import { readFile, readdir, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { BASE, newUser, signUp, verifyEmail, resetEmulators, step, report, close } from './e2e-lib.mjs';
 
 await resetEmulators();
+// Files the functions keep in a local stand-in for Google Drive (see
+// functions/drive.js); npm run test:e2e points them here.
+const driveDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '.drive-fake');
+await rm(driveDir, { recursive: true, force: true });
 
 let failed = false;
 try {
@@ -118,6 +124,129 @@ try {
   const feed = await alice.textContent('#activityFeed');
   assert.match(feed, /bob@example\.com joined as editor/);
   step('Activity feed shows the join and item changes');
+
+  // 9b. Files and photos, kept in the project's Drive folder.
+  const pdfBytes = Buffer.concat([Buffer.from('%PDF-1.4\n% Duck HSE test\n'), Buffer.alloc(4096, 65), Buffer.from('\n%%EOF\n')]);
+  await alice.click('#addFileBtn');
+  await alice.setInputFiles('#fFiles', { name: 'Lift plan rev B.pdf', mimeType: 'application/pdf', buffer: pdfBytes });
+  await alice.fill('#fNote', 'Signed copy');
+  await alice.click('#fileSaveBtn');
+  await alice.waitForFunction(() => /File added/.test(document.getElementById('filesMsg').textContent), null, { timeout: 20000 });
+  await alice.waitForFunction(() => /Lift plan rev B\.pdf[\s\S]*Signed copy/.test(document.getElementById('filesTable').textContent));
+
+  // A large phone photo is made smaller (at most 2400 px) before it is sent.
+  await alice.click('#addFileBtn');
+  const photoBytes = await alice.evaluate(async () => {
+    const c = document.createElement('canvas');
+    c.width = 4000; c.height = 3000;
+    const g = c.getContext('2d');
+    const img = g.createImageData(c.width, c.height);
+    for (let i = 0, p = 0; i < img.data.length; i += 4, p++) {
+      const x = p % c.width, y = (p / c.width) | 0;
+      const n = Math.imul(p, 2654435761) >>> 27;
+      img.data[i] = (x ^ y) & 255; img.data[i + 1] = (x + n) & 255; img.data[i + 2] = (y * 3 + n) & 255; img.data[i + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], 'Area 3 before.jpeg', { type: 'image/jpeg' }));
+    document.getElementById('fFiles').files = dt.files;
+    return blob.size;
+  });
+  assert.ok(photoBytes > 2 * 1048576, `test photo should be over 2 MB, was ${photoBytes}`);
+  await alice.click('#fileSaveBtn');
+  await alice.waitForFunction(() => /Area 3 before\.jpg/.test(document.getElementById('filesTable').textContent), null, { timeout: 30000 });
+  assert.match(await alice.textContent('#filesFoot'), /^2 files, /);
+
+  // What landed in Drive: a folder for the project, with the files inside.
+  const metas = await Promise.all((await readdir(driveDir)).filter((f) => f.endsWith('.json'))
+    .map(async (f) => JSON.parse(await readFile(path.join(driveDir, f), 'utf8'))));
+  const projFolder = metas.find((m) => m.name === `Tower Crane Works (${pid})`);
+  assert.ok(projFolder, 'project folder created');
+  assert.deepEqual(projFolder.parents, ['fake-root']);
+  const filesFolder = metas.find((m) => m.name === 'Files' && m.parents[0] === projFolder.id);
+  const storedPdf = metas.find((m) => m.name === 'Lift plan rev B.pdf');
+  assert.equal(storedPdf.parents[0], filesFolder.id);
+  assert.ok((await readFile(path.join(driveDir, storedPdf.id + '.bin'))).equals(pdfBytes), 'PDF stored byte for byte');
+  const storedPhoto = metas.find((m) => m.name === 'Area 3 before.jpg');
+  assert.ok(storedPhoto.size < photoBytes, 'photo made smaller');
+  step('Files and photos are added to the project’s Drive folder; big photos are made smaller');
+
+  // Web pages are refused in the app, and a page renamed to .png by the server.
+  await alice.click('#addFileBtn');
+  await alice.setInputFiles('#fFiles', { name: 'invoice.html', mimeType: 'text/html', buffer: Buffer.from('<script>alert(1)</script>') });
+  await alice.click('#fileSaveBtn');
+  await alice.waitForFunction(() => /cannot be added/.test(document.getElementById('fileFormMsg').textContent));
+  await alice.click('#fileModal .modal-foot [data-close]');
+  const disguised = await alice.evaluate((id) => firebase.functions().httpsCallable('projectFileUpload')({
+    projectId: id, name: 'photo.png', size: 25, data: btoa('<script>alert(1)</script>'), category: 'photo'
+  }).then(() => 'allowed', (e) => e.message), pid);
+  assert.match(disguised, /does not look like a real \.png/);
+  step('Web pages and disguised files are refused');
+
+  // Bob (editor) downloads and views; he cannot delete Alice's file.
+  await bob.reload();
+  await bob.waitForFunction(() => document.querySelectorAll('#filesTable tbody tr').length === 2, null, { timeout: 15000 });
+  const pdfRow = bob.locator('#filesTable tbody tr', { hasText: 'Lift plan rev B.pdf' });
+  assert.equal(await pdfRow.locator('[data-delete-file]').count(), 0, 'no Delete on someone else’s file');
+  const [pdfDl] = await Promise.all([bob.waitForEvent('download'), pdfRow.locator('[data-download]').click()]);
+  assert.equal(pdfDl.suggestedFilename(), 'Lift plan rev B.pdf');
+  assert.ok((await readFile(await pdfDl.path())).equals(pdfBytes), 'downloaded PDF matches');
+  await bob.locator('#filesTable tbody tr', { hasText: 'Area 3 before.jpg' }).locator('[data-view]').click();
+  await bob.waitForFunction(() => !document.getElementById('viewModal').hidden && document.getElementById('viewImg').naturalWidth > 0, null, { timeout: 15000 });
+  const dims = await bob.evaluate(() => [document.getElementById('viewImg').naturalWidth, document.getElementById('viewImg').naturalHeight]);
+  assert.deepEqual(dims, [2400, 1800]);
+  await bob.click('#viewModal .modal-foot [data-close]');
+  const pdfId = await pdfRow.locator('[data-download]').getAttribute('data-download');
+  const bobDelete = await bob.evaluate(([id, fileId]) => firebase.functions().httpsCallable('projectFileDelete')({ projectId: id, fileId })
+    .then(() => 'allowed', (e) => e.message), [pid, pdfId]);
+  assert.match(bobDelete, /Only a manager or the person who added a file/);
+  assert.equal(await bob.isVisible('#backupCard'), false, 'editors do not see backups');
+
+  // Bob attaches a file to a tracked item from the item window, then deletes it.
+  await bob.selectOption('#itemStatus', '');
+  await bob.locator('#itemsTable tr[data-id]', { hasText: 'Check outriggers' }).click();
+  await bob.click('#itemFiles [data-attach]');
+  await bob.setInputFiles('#fFiles', { name: 'toolbox talk.txt', mimeType: 'text/plain', buffer: Buffer.from('Outrigger mats checked.\n') });
+  await bob.click('#fileSaveBtn');
+  await bob.waitForFunction(() => /toolbox talk\.txt/.test(document.getElementById('itemFiles').textContent), null, { timeout: 20000 });
+  assert.match(await bob.textContent('#filesTable'), /toolbox talk\.txt[\s\S]*Item: <img src=x/);
+  await bob.click('#itemFiles [data-delete-file]');
+  await bob.waitForFunction(() => /None yet/.test(document.getElementById('itemFiles').textContent), null, { timeout: 20000 });
+  await bob.click('#itemModal .modal-foot [data-close]');
+  await alice.waitForFunction(() => /Deleted file: toolbox talk\.txt/.test(document.getElementById('activityFeed').textContent), null, { timeout: 15000 });
+  assert.match(await alice.textContent('#activityFeed'), /Added document: Lift plan rev B\.pdf/);
+  step('Bob downloads and views files, attaches one to an item, and cannot delete Alice’s');
+
+  // Backups: Alice backs up, downloads the backup, and restores tracked items.
+  await alice.waitForSelector('#backupCard:not([hidden])');
+  await alice.click('#backupNowBtn');
+  await alice.waitForFunction(() => /Backed up/.test(document.getElementById('backupMsg').textContent), null, { timeout: 20000 });
+  await alice.waitForSelector('#backupList [data-restore]');
+  await alice.click('#backupNowBtn');
+  await alice.waitForFunction(() => /less than a minute ago/.test(document.getElementById('backupMsg').textContent), null, { timeout: 20000 });
+  const [bkDl] = await Promise.all([alice.waitForEvent('download'), alice.click('#backupList [data-backup-download]')]);
+  const backup = JSON.parse(await readFile(await bkDl.path(), 'utf8'));
+  assert.equal(backup.format, 'duck-hse-project-backup');
+  assert.equal(backup.projectId, pid);
+  assert.equal(backup.items.length, 2);
+  assert.equal(backup.files.length, 2);
+  const itemTitles = async () => (await alice.evaluate((id) => firebase.firestore().collection('projects').doc(id).collection('items').get()
+    .then((s) => s.docs.map((d) => d.data().title).sort()), pid));
+  const before = await itemTitles();
+  await alice.evaluate(async (id) => {
+    const items = await firebase.firestore().collection('projects').doc(id).collection('items').get();
+    const outriggers = items.docs.find((d) => /Check outriggers/.test(d.data().title));
+    await Projects.deleteItem(id, Object.assign({ id: outriggers.id }, outriggers.data()));
+    await Projects.saveItem(id, null, { title: 'Temporary item', type: 'action' });
+  }, pid);
+  assert.deepEqual(await itemTitles(), [before.find((t) => /Permit/.test(t)), 'Temporary item'].sort());
+  await alice.click('#backupList [data-restore]');
+  await alice.waitForFunction(() => /Restored 2 items and removed 1 added since/.test(document.getElementById('backupMsg').textContent), null, { timeout: 30000 });
+  assert.deepEqual(await itemTitles(), before);
+  await alice.waitForFunction(() => /Before restore/.test(document.getElementById('backupList').textContent), null, { timeout: 15000 });
+  await alice.waitForFunction(() => /Restored tracked items from the backup/.test(document.getElementById('activityFeed').textContent), null, { timeout: 15000 });
+  step('Backups: made on demand, downloaded, and used to put deleted items back');
 
   if (process.env.E2E_SHOTS) {
     await alice.setViewportSize({ width: 1366, height: 900 });

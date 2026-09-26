@@ -24,3 +24,6 @@ functions/node_modules/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local fake Google Drive used by the browser tests
+test/.drive-fake/
