@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- NOTE: this page is deliberately NOT behind requireAccess().
+     Google Play's User Data policy requires the account/data deletion URL you
+     submit in Play Console to be reachable by anyone, without signing in or
+     installing the app. Gating it behind the sign-in screen is a common cause
+     of a "Data deletion" policy rejection. -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Delete your data · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="How to delete your Duck HSE Portal data and, if you created one, your cloud account.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>Delete your data</h2>
+        <div class="crumb">Account and data deletion — Duck HSE Portal</div>
+      </div>
+      <a class="btn" href="index.html">Back to app</a>
+    </div>
+    <div class="content" style="max-width: 820px;">
+
+      <div class="banner banner-info">
+        <div>This page is public on purpose. You do not need to sign in, install the app, or
+        contact anyone to use the options below.</div>
+      </div>
+
+      <div class="section-title" style="margin-top:0;">What data exists, and where</div>
+      <div class="card">
+        <table class="spec-table">
+          <tr><td>Lift assessments, permits, signatures, names, notes, equipment checklists</td><td>Stored on your own device only (browser <code>localStorage</code>)</td></tr>
+          <tr><td>Certificate photos attached to checklists</td><td>Stored on your own device only (browser <code>IndexedDB</code>)</td></tr>
+          <tr><td>Sign-in state for the app's access gate</td><td>Your device only (<code>sessionStorage</code>)</td></tr>
+          <tr><td>Terms / Privacy acceptance record</td><td>Your device only</td></tr>
+          <tr><td>Cloud account &amp; synced records</td><td>Only if you created a cloud account — see option 3</td></tr>
+        </table>
+        <p class="hint" style="margin-top:10px;">
+          The standard build has no server. If you never created a cloud account, deleting the
+          app or clearing its data removes everything, and there is nothing held about you
+          anywhere else.
+        </p>
+      </div>
+
+      <div class="section-title">Option 1 — Erase everything on this device now</div>
+      <div class="card">
+        <p style="margin-top:0; color:var(--ink-soft); font-size:13.5px;">
+          This permanently deletes every assessment, permit, signature, note, saved preference,
+          and the offline copy of the app from this device. It cannot be undone.
+          <strong>Export a backup first</strong> from Fleet &amp; Backup if you need the records.
+        </p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <a class="btn" href="settings.html">Export a backup first</a>
+          <button class="btn btn-danger" id="btnWipe">Erase all data on this device</button>
+        </div>
+        <div id="wipeResult" style="margin-top:12px;"></div>
+      </div>
+
+      <div class="section-title">Option 2 — Uninstall the app</div>
+      <div class="card">
+        <p style="margin:0; color:var(--ink-soft); font-size:13.5px;">
+          Uninstalling the Android app, or clearing its storage from
+          <strong>Android Settings → Apps → Duck HSE Portal → Storage → Clear storage</strong>,
+          deletes all locally held data as well. In a desktop browser, clear site data for this
+          site from the browser's privacy settings.
+        </p>
+      </div>
+
+      <div class="section-title">Option 3 — Delete a cloud account and its synced records</div>
+      <div class="card">
+        <p style="margin-top:0; color:var(--ink-soft); font-size:13.5px;">
+          Only relevant if you signed up for the optional cloud-sync account. To request deletion
+          of the account and every record synced to it, email the address below from the address
+          the account is registered to, with the subject <strong>"Delete my account and data"</strong>:
+        </p>
+        <table class="spec-table">
+          <tr><td>Email</td><td><a id="contactEmail" href="#">—</a></td></tr>
+          <tr id="contactPhoneRow" hidden><td>Phone</td><td><a id="contactPhone" href="#">—</a></td></tr>
+          <tr><td>What is deleted</td><td>Account record, authentication identity, and all assessments/permits synced to it</td></tr>
+          <tr><td>What may be retained, and why</td><td>Records the operator is required to keep by law (for example accounting/VAT records of a paid subscription), retained only for the statutory period and then deleted</td></tr>
+          <tr><td>Response time</td><td>Acknowledged within 7 days; completed within 30 days</td></tr>
+        </table>
+        <p class="hint" style="margin-top:10px;">
+          Deleting your account here does <strong>not</strong> cancel a Google Play subscription.
+          Cancel that separately in the Play Store app under
+          <strong>Payments &amp; subscriptions → Subscriptions</strong>, or it will keep renewing.
+        </p>
+      </div>
+
+      <div class="section-title">Your rights</div>
+      <div class="card">
+        <p style="margin:0; color:var(--ink-soft); font-size:13.5px;">
+          Under UAE Federal Decree-Law No. 45 of 2021 on the Protection of Personal Data you may
+          also request access to, correction of, restriction of, or transfer of personal data
+          concerning you, and withdraw consent at any time. See the
+          <a href="privacy.html">Privacy Notice</a> for the full description and for how to
+          complain to the UAE Data Office.
+        </p>
+      </div>
+
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/nav.js"></script>
+<script>
+renderSidebar('');
+renderFooter('app-footer');
+
+(function fillContact() {
+  if (typeof APP_PUBLISHER === 'undefined') return;
+  const e = document.getElementById('contactEmail');
+  e.href = 'mailto:' + APP_PUBLISHER.email + '?subject=Delete%20my%20account%20and%20data';
+  e.textContent = APP_PUBLISHER.email;
+  // The phone row stays hidden unless a published contact number has been set.
+  // The developer's personal mobile is not published in the app, so deletion
+  // requests come in by email — which is also what leaves an auditable trail.
+  if (APP_PUBLISHER.phone) {
+    const p = document.getElementById('contactPhone');
+    p.href = 'tel:' + APP_PUBLISHER.phone.replace(/\s+/g, '');
+    p.textContent = APP_PUBLISHER.phone;
+    document.getElementById('contactPhoneRow').hidden = false;
+  }
+})();
+
+document.getElementById('btnWipe').addEventListener('click', async () => {
+  if (!confirm('This permanently deletes ALL assessments, permits and signatures stored on this device, and the app\'s offline copy. Export a backup first if you have not already. Continue?')) return;
+  if (!confirm('Last check — this cannot be undone. Erase everything?')) return;
+
+  try { localStorage.clear(); } catch (e) { console.error(e); }
+  try { sessionStorage.clear(); } catch (e) { console.error(e); }
+  // Certificate photos are stored in IndexedDB, which localStorage.clear() does
+  // not touch — delete that database so no personal document images remain.
+  try { indexedDB.deleteDatabase('cla_certificate_store_v1'); } catch (e) { console.error(e); }
+  // HSE audit checklists and their evidence files (certificates, IDs,
+  // incident reports) live in their own IndexedDB database.
+  try { indexedDB.deleteDatabase('cla_audit_store_v1'); } catch (e) { console.error(e); }
+
+  // Drop the offline cache and unregister the service worker too, so no copy
+  // of the app's pages is left behind on the device.
+  try {
+    if ('caches' in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map(n => caches.delete(n)));
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch (e) { console.error(e); }
+
+  document.getElementById('wipeResult').innerHTML =
+    '<div class="banner banner-ok"><div>All local data, the offline copy of the app, and the sign-in session have been erased from this device.</div></div>';
+});
+</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

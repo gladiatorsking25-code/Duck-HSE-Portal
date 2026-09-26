@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subscribe · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/app-version.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script src="js/billing.js"></script>
+</head>
+<body>
+<div class="login-shell">
+  <div class="login-card" style="max-width: 460px;">
+    <div style="text-align:center; margin-bottom:8px;">
+      <img src="assets/icons/icon-192.png" alt="" style="width:48px;height:48px;border-radius:11px;">
+    </div>
+    <h2 id="payTitle" style="text-align:center; margin:0 0 4px;">Subscribe</h2>
+    <div id="payStatus" class="hint" style="text-align:center; margin-bottom:16px;"></div>
+
+    <div id="paySetup" hidden>
+      <div class="banner banner-warn"><div>Subscriptions are not active yet — the backend (Firebase + Play Billing) has not been configured. Once it is, this screen manages the free trial and paid plans. See SECURITY.md.</div></div>
+    </div>
+
+    <div id="payPlans"></div>
+
+    <div id="payOffline"></div>
+
+    <div id="payNotInApp" hidden>
+      <div class="banner banner-info"><div>Card subscription is handled by <strong>Google Play</strong> inside the Android app. On the web you can subscribe by <strong>PayPal or bank transfer</strong> — see "Other ways to subscribe" below.</div></div>
+    </div>
+
+    <div id="payResult" style="margin-top:12px;"></div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; font-size:13px;">
+      <a href="#" id="payRestore">Restore purchases</a>
+      <a href="#" id="paySignOut">Sign out</a>
+    </div>
+    <p class="hint" style="text-align:center; margin-top:16px;">
+      Questions? <a id="paySupport" href="#">contact support</a>.<br>
+      Manage or cancel anytime in the Play Store under Payments &amp; subscriptions.
+    </p>
+    <div class="hint" id="payBuild" style="text-align:center; margin-top:8px; opacity:.7;"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const cfg = SUBSCRIPTION_CONFIG;
+  if (typeof APP_BUILD_LABEL !== 'undefined') $('payBuild').textContent = APP_BUILD_LABEL;
+  $('paySupport').href = 'mailto:' + cfg.SUPPORT_EMAIL;
+
+  $('paySignOut').addEventListener('click', (e) => { e.preventDefault(); Access.signOut(); });
+
+  // Web / B2B path: the customer REQUESTS access; you send a payment link or
+  // invoice privately (by email) and activate them from the admin dashboard.
+  // No bank details are shown or shipped — safer for you.
+  function escOff(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function renderOffline() {
+    const op = cfg.OFFLINE_PAYMENT;
+    const host = $('payOffline');
+    if (!host) return;
+    if (!op || !op.enabled) { host.innerHTML = ''; return; }
+    const requestSubject = encodeURIComponent('Duck HSE Portal — subscription request');
+    const requestBody = encodeURIComponent(
+      'Hello,\n\nI would like to subscribe to Duck HSE Portal.\n\n' +
+      'My account email (the one I sign in with): __________\n' +
+      'Preferred payment method (PayPal / bank transfer / card): __________\n\n' +
+      'Please send me a secure payment link or invoice. Thank you.');
+    host.innerHTML = `
+      <details class="pay-offline" id="payOfflineDetails">
+        <summary>Not on the Android app? Request access</summary>
+        <div class="banner banner-info" style="margin-top:10px;"><div>
+          For web or company (B2B) subscriptions: request access below and we’ll send you a
+          secure payment link or invoice, then activate your account. Payment details are
+          arranged privately by email — never shown here.
+        </div></div>
+        <a class="btn btn-primary btn-sm" style="width:100%; justify-content:center;" href="mailto:${escOff(cfg.SUPPORT_EMAIL)}?subject=${requestSubject}&body=${requestBody}">Request access / invoice</a>
+        <p class="hint" style="margin-top:8px;">You’ll get access as soon as payment is confirmed — usually the same day.</p>
+      </details>`;
+  }
+  renderOffline();
+
+  $('payRestore').addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!Billing.available()) { $('payResult').innerHTML = '<div class="banner banner-info"><div>Open the Android app to restore purchases.</div></div>'; return; }
+    $('payResult').innerHTML = '<div class="hint">Checking Google Play…</div>';
+    try { const r = await Billing.restore(); $('payResult').innerHTML = `<div class="banner banner-ok"><div>Checked Google Play (${r.restored} purchase(s) synced). If you have an active plan, access will unlock shortly.</div></div>`; }
+    catch (err) { $('payResult').innerHTML = '<div class="banner banner-danger"><div>Could not restore purchases.</div></div>'; }
+  });
+
+  function renderPlans(details) {
+    const inApp = Billing.available();
+    $('payNotInApp').hidden = inApp;
+    const byId = {};
+    (details || []).forEach(d => { byId[d.itemId || d.id] = d; });
+    $('payPlans').innerHTML = cfg.PRODUCTS.map(p => {
+      const d = byId[p.id];
+      // Live Play price if in the app; otherwise the configured display price;
+      // otherwise just the billing period so the plan still reads clearly.
+      const price = (d && d.price) ? (d.price.value + ' ' + d.price.currency)
+        : (p.displayPrice || '');
+      const sub = price ? (p.per || '') : (p.per || ('Duck HSE Portal ' + p.label));
+      return `<div class="card" style="margin-bottom:10px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div>
+          <strong>${p.label}</strong>
+          <div class="hint">${sub}</div>
+        </div>
+        <div style="text-align:right;">
+          ${price ? `<div class="num" style="font-weight:600;">${price}</div>` : ''}
+          <button class="btn btn-primary btn-sm buy-btn" data-product="${p.id}">Subscribe</button>
+        </div>
+      </div>`;
+    }).join('') +
+      (cfg.PLAN_NOTE ? `<p class="hint" style="margin:4px 0 0;">${escOff(cfg.PLAN_NOTE)}</p>` : '') +
+      (cfg.PLAN_TERMS ? `<p class="hint" style="margin:6px 0 12px;">${escOff(cfg.PLAN_TERMS)}</p>` : '');
+    if (!inApp) $('payNotInApp').hidden = false;
+    document.querySelectorAll('.buy-btn').forEach(b => b.addEventListener('click', () => buy(b.getAttribute('data-product'))));
+  }
+
+  async function buy(productId) {
+    // In a browser there is no Play Billing — route to the invoice/bank/PayPal
+    // option (which works everywhere) instead of dead-ending.
+    if (!Billing.available()) {
+      const off = document.getElementById('payOfflineDetails') || document.querySelector('.pay-offline');
+      if (off) { off.open = true; try { off.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} }
+      $('payResult').innerHTML = '<div class="banner banner-info"><div>Card subscription is billed through <strong>Google Play</strong> in the Android app. Not on the app yet? Tap <strong>“Request access”</strong> below and we’ll send you a secure payment link.</div></div>';
+      return;
+    }
+    $('payResult').innerHTML = '<div class="hint">Opening Google Play…</div>';
+    try {
+      await Billing.subscribe(productId);
+      $('payResult').innerHTML = '<div class="banner banner-ok"><div>Thank you — your subscription is active. Taking you to the app…</div></div>';
+      setTimeout(() => location.replace('index.html'), 1500);
+    } catch (err) {
+      const msg = err.code === 'cancelled' ? 'Purchase cancelled.'
+        : err.code === 'unavailable' ? 'Open the Android app to subscribe.'
+        : err.code === 'verify' ? 'Payment went through but we could not confirm it yet. It will unlock shortly — or contact support.'
+        : 'Something went wrong with the purchase.';
+      $('payResult').innerHTML = `<div class="banner ${err.code === 'cancelled' ? 'banner-info' : 'banner-danger'}"><div>${msg}</div></div>`;
+    }
+  }
+
+  // Not configured yet → preview mode.
+  if (!Access.firebaseOn()) {
+    $('paySetup').hidden = false;
+    renderPlans(null);
+    return;
+  }
+
+  Access.handlePaywallPage(async (ctx) => {
+    if (!ctx.configured) { $('paySetup').hidden = false; renderPlans(null); return; }
+    const access = ctx.access || {};
+    if (access.state === 'trial') {
+      const left = Entitlements.daysLeft(access.until);
+      $('payTitle').textContent = 'You’re on the free trial';
+      $('payStatus').textContent = `${left} day${left === 1 ? '' : 's'} left. Subscribe now to keep access when the trial ends.`;
+    } else if (access.state === 'locked' || access.state === 'expired') {
+      $('payTitle').textContent = 'Your free trial has ended';
+      $('payStatus').textContent = 'Subscribe to continue using Duck HSE Portal.';
+    } else {
+      // pending / unknown — the backend hasn't stamped a trial yet, or the
+      // entitlement can't be read. Show the plans neutrally rather than a
+      // misleading "trial ended".
+      $('payTitle').textContent = 'Choose your plan';
+      $('payStatus').textContent = 'Subscribe monthly or yearly below, or pay by invoice / bank transfer.';
+    }
+    let details = null;
+    try { details = await Billing.getProducts(); } catch (e) { /* not in app */ }
+    renderPlans(details);
+  });
+})();
+</script>
+</body>
+</html>

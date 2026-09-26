@@ -1,0 +1,49 @@
+# .htaccess — Apache / LiteSpeed settings for hosting on Hostinger.
+# Upload the CONTENTS of public/ to public_html/. Nothing outside public/ is
+# meant to be served.
+
+Options -Indexes
+DirectoryIndex index.html
+
+# ---- Always HTTPS ---------------------------------------------------------
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# ---- Never serve dotfiles, docs, keys or backups --------------------------
+# (Defence in depth: none of these should be in public/ in the first place.)
+<FilesMatch "(^\.|\.(md|txt|env|pem|key|p12|jks|keystore|bak|zip|log|mjs|ps1|cmd|lock|yaml|yml)$|^(package|package-lock|firebase|twa-manifest|service-account.*|google-services)\.json$)">
+  Require all denied
+</FilesMatch>
+
+# ---- Security headers -----------------------------------------------------
+<IfModule mod_headers.c>
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(self), geolocation=(), microphone=(), payment=(self)"
+  Header always set Cross-Origin-Opener-Policy "same-origin-allow-popups"
+
+  # Content-Security-Policy. Pages still use inline <script> blocks and inline
+  # event handlers, so 'unsafe-inline' is needed for now; everything else is
+  # restricted to this site and the Google/Firebase services the app calls.
+  # localhost ports are the optional on-device AI model servers (js/hse-ai.js).
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.googleapis.com https://*.cloudfunctions.net https://*.run.app https://www.gstatic.com https://accounts.google.com http://localhost:11434 http://localhost:1234 http://127.0.0.1:11434 http://127.0.0.1:1234; frame-src https://accounts.google.com https://docs.google.com https://drive.google.com https://*.firebaseapp.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+  # The service worker and HTML must never be cached stale.
+  <FilesMatch "(\.html|sw\.js|manifest\.webmanifest)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(css|js|png|ico|svg|woff2)$">
+    Header set Cache-Control "public, max-age=604800"
+  </FilesMatch>
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType application/manifest+json .webmanifest
+  AddType text/javascript .js
+</IfModule>

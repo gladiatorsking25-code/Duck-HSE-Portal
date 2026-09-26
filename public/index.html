@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="js/consent.js"></script>
+<script>requireConsent();</script>
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+<script>requireAccess();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div class="main">
+    <div class="topbar">
+      <div>
+        <h2>Dashboard</h2>
+        <div class="crumb">Overview of lifting activity</div>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <a class="btn" href="permit.html">+ New permit</a>
+        <a class="btn btn-primary" href="assessment.html">+ New assessment</a>
+      </div>
+    </div>
+
+    <div class="content">
+      <div id="disclaimer-banner"></div>
+
+      <div id="subscription-panel"></div>
+
+      <div class="grid grid-4" id="stat-cards"></div>
+
+      <div class="section-title">Permits expiring soon</div>
+      <div id="expiring-permits"></div>
+
+      <div class="section-title">Recent assessments</div>
+      <div id="recent-assessments"></div>
+
+      <div id="app-footer"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/crane-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/cloud-sync.js"></script>
+<script src="js/nav.js"></script>
+<script>
+renderSidebar('index');
+renderDisclaimer('disclaimer-banner');
+renderFooter('app-footer');
+
+// Subscription / trial status on the dashboard. Live-updates from the server
+// entitlement doc. Hidden entirely in local mode (Firebase not configured).
+function renderSubscriptionPanel() {
+  const host = document.getElementById('subscription-panel');
+  if (!host) return;
+  if (typeof Access === 'undefined' || !Access.firebaseOn()) { host.innerHTML = ''; return; }
+  const escp = (v) => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  Access.armAuthWatch(function (user, access, doc) {
+    if (!user || !access) { host.innerHTML = ''; return; }
+    const st = access.state;
+    const email = user.email || '';
+    const fmtD = (ms) => ms ? new Date(Number(ms)).toLocaleDateString() : '—';
+    const planName = (doc && doc.subscriptionId === 'pro_yearly') ? 'Yearly'
+      : (doc && doc.subscriptionId === 'pro_monthly') ? 'Monthly' : '';
+    let title = '', detail = '', actions = '';
+    if (st === 'admin') {
+      title = 'Administrator account';
+      detail = 'Full access to Duck HSE Portal.';
+      actions = '<a class="btn btn-sm btn-primary" href="admin.html">Admin dashboard</a>';
+    } else if (st === 'trial') {
+      const left = Entitlements.daysLeft(access.until);
+      title = 'Free trial';
+      detail = `Started ${fmtD(doc && doc.trialStartedAt)} · Expires ${fmtD(access.until)} — ${left} day${left === 1 ? '' : 's'} left.`;
+      actions = '<a class="btn btn-sm btn-primary" href="subscribe.html">Subscribe</a>';
+    } else if (st === 'active' || st === 'granted') {
+      title = planName ? (planName + ' subscription') : 'Subscription active';
+      const exp = access.until || (doc && doc.subscriptionExpiryMillis);
+      const since = doc && doc.subscriptionUpdatedAt && doc.subscriptionUpdatedAt.toMillis ? doc.subscriptionUpdatedAt.toMillis() : null;
+      detail = (since ? `Since ${fmtD(since)} · ` : '') + (exp ? `Renews / expires ${fmtD(exp)}.` : 'Active — managed in Google Play.');
+      actions = '<a class="btn btn-sm" href="subscribe.html">Manage plan</a>';
+    } else if (st === 'locked' || st === 'expired') {
+      title = 'Subscription needed';
+      detail = `Your ${planName ? planName.toLowerCase() + ' subscription' : 'free trial'} has ended${access.until ? ' on ' + fmtD(access.until) : ''}. Subscribe to continue.`;
+      actions = '<a class="btn btn-sm btn-primary" href="subscribe.html">Subscribe</a>';
+    } else if (st === 'pending') {
+      title = 'Starting your free trial…';
+      detail = 'One moment — your trial dates will appear here.';
+      actions = '<a class="btn btn-sm" href="index.html">Refresh</a>';
+    } else {
+      title = 'Subscription';
+      detail = 'Status is unavailable right now.';
+      actions = '<a class="btn btn-sm" href="subscribe.html">View plans</a>';
+    }
+    // Admins always get the admin link even when another state is shown.
+    if (doc && doc.role === 'admin' && st !== 'admin') {
+      actions = '<a class="btn btn-sm" href="admin.html">Admin</a>' + actions;
+    }
+    host.innerHTML = `<div class="sub-panel state-${escp(st)}">
+      <div class="sub-panel-main">
+        <div class="sub-panel-title">${escp(title)}</div>
+        <div class="sub-panel-detail">${escp(detail)}</div>
+        <div class="sub-panel-email">${escp(email)}</div>
+      </div>
+      <div class="sub-panel-actions">${actions}</div>
+    </div>`;
+  });
+}
+renderSubscriptionPanel();
+
+const assessments = DB.getAssessments().sort((a,b) => new Date(b.date) - new Date(a.date));
+const permits = DB.getPermits();
+
+const passCount = assessments.filter(a => a.isValid).length;
+const failCount = assessments.length - passCount;
+const activePermits = permits.filter(p => new Date(p.validTo) >= new Date() && p.status !== 'suspended');
+const criticalOpen = permits.filter(p => p.isCriticalLift && new Date(p.validTo) >= new Date()).length;
+
+document.getElementById('stat-cards').innerHTML = `
+  <div class="card stat-card">
+    <div class="label">Total assessments</div>
+    <div class="value">${assessments.length}</div>
+    <div class="foot">${passCount} allowed · ${failCount} not allowed</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Active permits</div>
+    <div class="value ok">${activePermits.length}</div>
+    <div class="foot">of ${permits.length} total on file</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Critical lifts (open)</div>
+    <div class="value ${criticalOpen ? 'danger' : ''}">${criticalOpen}</div>
+    <div class="foot">require appointed-person sign-off</div>
+  </div>
+  <div class="card stat-card">
+    <div class="label">Fleet on file</div>
+    <div class="value">${Object.keys(CRANE_DATA).length}</div>
+    <div class="foot">crane models configured</div>
+  </div>
+`;
+
+// Expiring within 48h
+const soon = permits.filter(p => {
+  const hrs = (new Date(p.validTo) - new Date()) / 36e5;
+  return hrs > -1 && hrs < 48 && p.status !== 'suspended';
+}).sort((a,b) => new Date(a.validTo) - new Date(b.validTo));
+
+document.getElementById('expiring-permits').innerHTML = soon.length ? `
+  <table class="data-table">
+    <thead><tr><th>Permit #</th><th>Location</th><th>Valid to</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      ${soon.map(p => {
+        const expired = new Date(p.validTo) < new Date();
+        return `<tr>
+          <td class="num">${p.permitNumber}</td>
+          <td>${p.location || '—'}</td>
+          <td class="num">${fmtDate(p.validTo)}</td>
+          <td>${expired ? '<span class="badge badge-fail"><span class="badge-dot"></span>Expired</span>' : '<span class="badge badge-warn"><span class="badge-dot"></span>Expiring soon</span>'}</td>
+          <td><a class="btn btn-sm" href="permit.html?id=${p.id}&mode=view">View</a></td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
+` : `<div class="card empty-state"><div class="icon">✓</div>No permits expiring in the next 48 hours.</div>`;
+
+const recent = assessments.slice(0, 6);
+document.getElementById('recent-assessments').innerHTML = recent.length ? `
+  <table class="data-table">
+    <thead><tr><th>Date</th><th>Crane</th><th>Load (t)</th><th>Radius / Angle</th><th>Boom (m)</th><th>Result</th></tr></thead>
+    <tbody>
+      ${recent.map(a => `<tr>
+        <td class="num">${fmtDate(a.date)}</td>
+        <td>${a.craneModel}</td>
+        <td class="num">${a.loadWeight.toFixed(1)}</td>
+        <td class="num">${a.jibMode ? a.boomAngle.toFixed(1) + '°' : (a.workingRadius != null ? a.workingRadius.toFixed(1) + ' m' : '—')}</td>
+        <td class="num">${a.boomLength != null ? a.boomLength.toFixed(1) : '—'}</td>
+        <td>${a.isValid ? '<span class="badge badge-ok"><span class="badge-dot"></span>Allowed</span>' : '<span class="badge badge-fail"><span class="badge-dot"></span>Not allowed</span>'}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+` : `<div class="card empty-state"><div class="icon">＋</div>No assessments yet. <a href="assessment.html">Run your first lift assessment</a>.</div>`;
+</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>

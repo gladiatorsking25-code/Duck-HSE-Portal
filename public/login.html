@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in · Duck HSE Portal</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="js/firebase-config.js"></script>
+<script src="js/firebase-init.js"></script>
+<script src="js/firebase-auth.js"></script>
+<!-- Installable-app / PWA metadata (see manifest.webmanifest, sw.js, js/pwa.js) -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16283a">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Duck HSE">
+<meta name="description" content="Crane load-chart assessments, lift diagrams, pre-lift briefings and permits to work, aligned with ADOSH-SF CoP 34.0. A planning aid — not a replacement for the certified load chart or an Appointed Person's sign-off.">
+<link rel="icon" href="assets/icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<script src="js/app-version.js"></script>
+<script src="js/subscription-config.js"></script>
+<script src="js/entitlements.js"></script>
+<script src="js/access.js"></script>
+</head>
+<body>
+<div class="login-shell">
+  <div class="login-card">
+    <div class="brand-row" style="justify-content:center; margin-bottom:18px;">
+      <span class="mark" style="font-size:20px;">🦆</span>
+      <div>
+        <h1 style="margin:0;">Duck HSE Portal</h1>
+        <div class="sub">HSE PORTAL</div>
+      </div>
+    </div>
+
+    <div id="cloudSection" hidden>
+      <h2 id="cloudHeading" style="margin:0 0 4px; font-size:18px;">Sign in</h2>
+      <p class="hint" id="cloudSub" style="margin-bottom:16px;"></p>
+      <form id="cloudLoginForm">
+        <div class="field">
+          <label for="cloudEmail">Email</label>
+          <input type="email" id="cloudEmail" autocomplete="email" required>
+        </div>
+        <div class="field">
+          <label for="cloudPassword">Password</label>
+          <input type="password" id="cloudPassword" autocomplete="current-password" required minlength="6">
+        </div>
+        <div id="cloudLoginError"></div>
+        <button class="btn btn-primary" type="submit" style="width:100%; margin-top:8px;" id="cloudSubmitBtn">Sign in</button>
+      </form>
+      <div style="display:flex; justify-content:space-between; margin-top:12px; font-size:12.5px;">
+        <a href="#" id="toggleModeLink">New here? Create an account</a>
+        <a href="#" id="forgotPasswordLink">Forgot password?</a>
+      </div>
+      <p class="hint" id="trialNote" style="margin-top:12px;"></p>
+    </div>
+
+    <div id="unconfiguredSection" hidden>
+      <div class="banner banner-danger">Sign-in is not available: this copy of the portal has no account service configured.</div>
+    </div>
+
+    <div id="app-footer" style="margin-top:26px;"></div>
+  </div>
+</div>
+
+<script src="js/nav.js"></script>
+<script>
+renderFooter('app-footer');
+const $ = (id) => document.getElementById(id);
+const FB_ON = typeof FIREBASE_READY !== 'undefined' && FIREBASE_READY;
+
+// Banner messages are set with textContent so an email address or an error
+// string can never inject markup.
+function showBanner(el, kind, text) {
+  el.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'banner banner-' + kind;
+  div.style.marginTop = '6px';
+  div.textContent = text;
+  el.appendChild(div);
+}
+
+if (!FB_ON) {
+  $('unconfiguredSection').hidden = false;
+} else {
+  // ---- Firebase configured: real accounts only ----
+  $('cloudSection').hidden = false;
+  const trialDays = SUBSCRIPTION_CONFIG.TRIAL_DAYS;
+  let mode = 'signin';
+  const cloudErr = $('cloudLoginError');
+  const submitBtn = $('cloudSubmitBtn');
+
+  function setMode(m) {
+    mode = m;
+    $('cloudHeading').textContent = m === 'signin' ? 'Sign in' : 'Create your account';
+    $('cloudSub').textContent = m === 'signin' ? 'Access your assessments, permits and checklists.' : `Start a free ${trialDays}-day trial — full access, no card required.`;
+    submitBtn.textContent = m === 'signin' ? 'Sign in' : 'Create account & start trial';
+    $('toggleModeLink').textContent = m === 'signin' ? 'New here? Create an account' : 'Have an account? Sign in';
+    $('trialNote').textContent = m === 'signin' ? '' : `After the ${trialDays}-day trial, a subscription is required. You can cancel anytime.`;
+    cloudErr.innerHTML = '';
+  }
+  setMode('signin');
+
+  $('toggleModeLink').addEventListener('click', (e) => { e.preventDefault(); setMode(mode === 'signin' ? 'signup' : 'signin'); });
+
+  $('forgotPasswordLink').addEventListener('click', async (e) => {
+    e.preventDefault();
+    const email = $('cloudEmail').value.trim();
+    if (!email) { showBanner(cloudErr, 'warn', 'Enter your email above first.'); return; }
+    try { await CloudAuth.resetPassword(email); showBanner(cloudErr, 'ok', 'If an account exists for ' + email + ', a password reset email is on its way.'); }
+    catch (err) { showBanner(cloudErr, 'danger', err.message); }
+  });
+
+  $('cloudLoginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = $('cloudEmail').value.trim();
+    const password = $('cloudPassword').value;
+    cloudErr.innerHTML = '';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Please wait…';
+    try {
+      if (mode === 'signup') await CloudAuth.signUp(email, password);
+      else await CloudAuth.signIn(email, password);
+      // Don't hard-redirect here — Access.handleLoginPage()'s watcher routes to
+      // the app (if entitled) or the paywall (if the trial has ended).
+      submitBtn.textContent = 'Signing in…';
+    } catch (err) {
+      showBanner(cloudErr, 'danger', err.message || 'Sign-in failed.');
+      submitBtn.disabled = false;
+      setMode(mode);
+    }
+  });
+
+  // If already signed in, route straight to the app or the paywall.
+  Access.handleLoginPage(function () { /* onReady: stay on the form */ });
+}
+</script>
+<script src="js/pwa.js"></script>
+</body>
+</html>
